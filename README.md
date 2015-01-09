@@ -29,7 +29,7 @@ The industry standard circuit simulator is called Spice. 'Krets' is Swedish for 
 
 Industry conference for plugin developers.
 
-http://www.dafx.de/
+* http://www.dafx.de/
 
 ### Modified Node Analysis / Electronics
 
