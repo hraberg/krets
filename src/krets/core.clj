@@ -13,6 +13,8 @@
 (set! *warn-on-reflection* true)
 (set! *unchecked-math* :warn-on-boxed)
 
+(x/set-current-implementation :vectorz )
+
 ;; Netlist parser
 
 (def spice-metric-prefixes
@@ -71,8 +73,10 @@
     dt
     Double/NaN))
 
+(def non-linear-elements #{:d})
+
 (defn non-linear? [circuit]
-  (boolean (some #{:d} (keys circuit))))
+  (boolean (some non-linear-elements (keys circuit))))
 
 (defn parse-netlist [netlist]
   (let [[title & lines] (-> netlist
@@ -111,7 +115,7 @@
         dt (-> circuit meta :time-step)]
     (doseq [k (case linearity
                 :linear [:r :c]
-                :non-linear [:d])
+                :non-linear non-linear-elements)
             [_ ^double n1 n2 r-or-c-or-model] (k circuit)
             :let [g (double (case k
                               :r (/ ^double r-or-c-or-model)
@@ -135,7 +139,7 @@
     (doseq [k (case linearity
                 :linear [:v :i]
                 :transient [:c]
-                :non-linear [:d])
+                :non-linear non-linear-elements)
             [^long idx [_ ^double n1 ^double n2 c-or-model ^double val]] (map-indexed vector (k circuit))
             [^double xm sign] [[n1 -] [n2 +]]
             :when (not (ground? xm))
