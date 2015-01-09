@@ -100,7 +100,7 @@
         m (-> circuit meta :number-of-voltage-sources double)]
     (x/zero-matrix (+ n m) (+ n m))))
 
-(defn xz-vector [circuit]
+(defn x-or-z-vector [circuit]
   (let [n (-> circuit meta :number-of-nodes double)
         m (-> circuit meta :number-of-voltage-sources double)]
     (x/zero-vector (+ n m))))
@@ -128,7 +128,7 @@
     a))
 
 (defn source-stamp [circuit x linearity]
-  (let [z (xz-vector circuit)
+  (let [z (x-or-z-vector circuit)
         dt (-> circuit meta :time-step double)
         n (-> circuit meta :number-of-nodes long)]
     (doseq [k (case linearity
@@ -155,7 +155,7 @@
 
 (defn dc-operating-point
   ([circuit]
-   (dc-operating-point circuit (xz-vector circuit)))
+   (dc-operating-point circuit (x-or-z-vector circuit)))
   ([circuit x]
    (let [a (conductance-stamp circuit x :linear)
          z (source-stamp circuit x :linear)]
