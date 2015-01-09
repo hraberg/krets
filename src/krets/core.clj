@@ -295,58 +295,10 @@
       (print-result circuit series)
       (plot-result circuit series))))
 
-;; http://www.ecircuitcenter.com/SpiceTopics/Nodal%20Analysis/Nodal%20Analysis.htm
-(def example-netlist-1
-  "LINEAR_DC_CKT.CIR - SIMPLE CIRCUIT FOR NODAL ANALYSIS
-*
-IS      0       1       DC      1A
-*
-R1      1       0       10
-R2      1       2       1K
-R3      2       0       1K
-*
-* ANALYSIS
-.TRAN   1MS  10MS
-* VIEW RESULTS
-.PRINT  TRAN    V(1) V(2)
-.PROBE
-.END")
+(defn process-file [f]
+  (-> f slurp parse-netlist batch))
 
-;; http://www.ecircuitcenter.com/SpiceTopics/Transient%20Analysis/Transient%20Analysis.htm
-(def example-netlist-2
-  "TRANSIENT_CKT.CIR - SIMPLE CIRCUIT FOR TRANSIENT NODAL ANALYSIS
-*
-IS      0       1       DC      10A
-*
-R1      0       1       1
-R2      1       2       1K
-R3      2       0       100K
-*
-C1      0       2       10u
-*
-* ANALYSIS
-.TRAN   0.0005 0.200
-* VIEW RESULTS
-.PLOT  TRAN    V(1) V(2)
-* .PRINT  TRAN    V(1) V(2)
-.PROBE
-.END")
-
-;; http://www.ecircuitcenter.com/SpiceTopics/Non-Linear%20Analysis/Non-Linear%20Analysis.htm
-(def example-netlist-3
-  "NON-LINEAR_DC_CKT.CIR - SIMPLE NON-LINEAR CIRCUIT
-*
-IS      0       1       DC      0.1A
-*
-R1      1       0       100
-R2      1       2       10K
-D1      2       0       DNOM
-*
-.MODEL DNOM D(IS=1E-15)
-*
-* ANALYSIS
-.TRAN   1MS  10MS
-* VIEW RESULTS
-.PRINT  TRAN    V(1) V(2)
-.PROBE
-.END")
+(defn -main [& [f]]
+  (if f
+    (process-file f)
+    (println "Need to specify a netlist file")))
