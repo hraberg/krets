@@ -88,15 +88,10 @@
                      (w/postwalk (some-fn spice-number identity))
                      (group-by (fn [[[c]]]
                                  (keyword (s/lower-case c)))))]
-    (with-meta
-      circuit
-      {:netlist netlist
-       :title title
-       :number-of-nodes (number-of-nodes circuit)
-       :number-of-voltage-sources (number-of-voltage-sources circuit)
-       :time-step (time-step circuit)
-       :models (models circuit)
-       :non-linear? (non-linear? circuit)})))
+    (with-meta circuit
+      (->> '[number-of-nodes number-of-voltage-sources time-step models non-linear?]
+           (map (juxt keyword #((ns-resolve 'krets.core %) circuit)))
+           (apply merge {:netlist netlist :title title})))))
 
 ;; MNA
 
