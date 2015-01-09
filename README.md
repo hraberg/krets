@@ -58,7 +58,7 @@ This is the technique used by Spice and most other simulators.
 
 ### Wave Digital Filters
 
-Another interesting approach, needs more hands-on knowledge to manage circuits with multiple non-linear elements.
+Another interesting approach, needs more hands-on knowledge to manage circuits with multiple non-linear elements (like diodes and transistors).
 
 * https://ccrma.stanford.edu/~dtyeh/papers/wdftutorial.pdf
 * http://www.nireaktor.com/reaktor-tutorials/wave-digital-filters-in-reaktor/
