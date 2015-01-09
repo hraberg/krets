@@ -33,7 +33,7 @@ Industry conference for plugin developers.
 
 * http://www.dafx.de/
 
-### Modified Node Analysis / Electronics
+### Modified Nodal Analysis / Electronics
 
 This is the technique used by Spice and most other simulators.
 
