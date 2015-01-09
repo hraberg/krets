@@ -10,6 +10,8 @@ To achieve this we need to be able to simulate `V` voltage sources , `I` current
 
 The industry standard circuit simulator is called Spice. 'Krets' is Swedish for circuit.
 
+Tests and implementation guidance from http://www.ecircuitcenter.com/SPICEtopics.htm
+
 ## References
 
 ### Synthesizers
@@ -36,7 +38,7 @@ Industry conference for plugin developers.
 This is the technique used by Spice and most other simulators.
 
 * http://www.swarthmore.edu/NatSci/echeeve1/Ref/mna/MNA_All.html
-* http://www.ecircuitcenter.com/SpiceTopics/Nodal%20Analysis/Nodal%20Analysis.htm
+* http://www.ecircuitcenter.com/SPICEtopics.htm
 * http://qucs.sourceforge.net/docs/technical/technical.pdf
 * http://www.allaboutcircuits.com/
 * https://ccrma.stanford.edu/~dtyeh/papers/DavidYehThesissinglesided.pdf
