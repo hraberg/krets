@@ -13,7 +13,7 @@
 (set! *warn-on-reflection* true)
 (set! *unchecked-math* :warn-on-boxed)
 
-(x/set-current-implementation :vectorz )
+(x/set-current-implementation :vectorz)
 
 ;; Netlist parser
 
