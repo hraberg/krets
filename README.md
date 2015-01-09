@@ -2,7 +2,7 @@
 
 Electronic circuit analysis in Clojure using Modified Nodal Analysis. Extremely rudimentary.
 
-During 1996-97 I was writing a [Nord Lead clone in C++](http://www.student.nada.kth.se/~raberg/vl),  which kind of worked but was never properly finished. So almost 10 years later, I've decided to start working on another software synthesizer using a different approach. I'm learning a lot - I haven't looked at electronics since high school - and I'm mainly having fun exploring the subject.
+During 1996-97 I was writing a [Nord Lead clone in C++](http://www.student.nada.kth.se/~raberg/vl.html),  which kind of worked but was never properly finished. So almost 10 years later, I've decided to start working on another software synthesizer using a different approach. I'm learning a lot - I haven't looked at electronics since high school - and I'm mainly having fun exploring the subject.
 
 The goal here is real-time circuit modelling of an analog synthesizer. A mildly realistic target is the [Music From Outer Space](http://www.musicfromouterspace.com/analogsynth_new/NOISETOASTER/NOISETOASTER.php) which is the subject of Ray Wilson's book [Make: Analog Synthesizers](http://www.makershed.com/products/make-analog-synthesizers) This repository is very far from that goal though! I expect to ditch Clojure for some other language - Rust, Nim or C - once (and if) I figure out how it's supposed to work.
 
