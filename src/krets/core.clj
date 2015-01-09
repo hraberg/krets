@@ -105,6 +105,7 @@
         m (-> circuit meta :number-of-voltage-sources double)]
     (x/zero-vector (+ n m))))
 
+;; This fn doesn't stamp the voltage sources in their rows outside the conductance sub matrix.
 (defn conductance-stamp [circuit x linearity]
   (let [a (a-matrix circuit)
         dt (-> circuit meta :time-step)]
