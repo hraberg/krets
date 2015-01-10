@@ -16,6 +16,8 @@
 
 (x/set-current-implementation :vectorz)
 
+(def low-key (comp keyword s/lower-case))
+
 ;; Netlist parser
 
 (def spice-metric-prefixes
@@ -37,7 +39,7 @@
   (when-let [[_ x p] (and (string? s)
                           (re-find spice-number-pattern s))]
     (* (double (read-string x))
-       (double (spice-metric-prefixes (some-> p s/lower-case keyword) 1)))))
+       (double (spice-metric-prefixes (some-> p low-key) 1)))))
 
 (defn re? [re]
   #(re-find re %))
@@ -57,18 +59,18 @@
        count))
 
 (defn commands [circuit]
-  (group-by (comp keyword s/lower-case first) (:. circuit)))
+  (group-by (comp low-key first) (:. circuit)))
 
 (defn sub-commands [m]
-  (group-by (comp keyword s/lower-case second) m))
+  (group-by (comp low-key second) m))
 
 (defn models [circuit]
   (->> (for [[_ n t & kvs] (:.model (commands circuit))]
          {n (with-meta
               (->> (for [[k v] (partition 2 kvs)]
-                     [(-> k s/lower-case keyword) v])
+                     [(low-key k) v])
                    (into {}))
-              {:element-type (keyword (s/lower-case t)) :name n})})
+              {:element-type (low-key t) :name n})})
        (apply merge)))
 
 (defn time-step [circuit]
@@ -82,7 +84,7 @@
   (boolean (some non-linear-elements (keys circuit))))
 
 (defn element-type [[[c]]]
-  (keyword (s/lower-case c)))
+  (low-key c))
 
 (defn parse-netlist [netlist]
   (let [[title & lines] (-> netlist
