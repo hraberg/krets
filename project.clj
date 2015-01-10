@@ -6,6 +6,6 @@
   :dependencies [[org.clojure/clojure "1.7.0-alpha4"]
                  [org.jfree/jfreechart "1.0.19"]
                  [net.mikera/core.matrix "0.32.1"]
-                 [net.mikera/vectorz-clj "0.28.0" :exclude [core.matrix]]
-                 [clatrix "0.4.0" :exclude [core.matrix]]]
+                 [net.mikera/vectorz-clj "0.28.0"]
+                 [clatrix "0.4.0"]]
   :main krets.core)
