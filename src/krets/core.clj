@@ -50,8 +50,8 @@
   (defn add [a b]
     (x/add a b))
 
-  (defn eseq [m]
-    (x/eseq m))
+  (defn row-count ^long [m]
+    (x/row-count m))
 
   *matrix-backend*)
 
@@ -80,8 +80,8 @@
   (defn add ^SimpleMatrix [^SimpleMatrix a ^SimpleMatrix b]
     (.plus a b))
 
-  (defn eseq [^SimpleMatrix m]
-    (seq (.getData (.getMatrix m))))
+  (defn row-count ^long [^SimpleMatrix m]
+    (.numRows m))
 
   *matrix-backend*)
 
@@ -301,40 +301,46 @@
 (def ^:dynamic *newton-tolerance* 1e-7)
 (def ^:dynamic *newton-iterations* 500)
 
+(defn within-tolerance? [^double tolerance ^double x ^double y]
+  (< (/ (Math/abs (- y x)) (Math/abs y)) tolerance))
+
 (defn non-linear-step [circuit a z x _]
   (let [z (add z (source-stamp circuit x :transient))
         newton-step (fn [x]
                       (let [a (add a (conductance-stamp circuit x :non-linear))
                             z (add z (source-stamp circuit x :non-linear))]
                         (solve a z)))
-        within-tolerance? (fn [^double x ^double y]
-                            (< (/ (Math/abs (- y x)) (Math/abs y)) (double *newton-tolerance*)))
-        converged? (fn [[x y]]
-                     (every? true? (map within-tolerance? (eseq x) (eseq y))))
-        [_ x] (->> x
-                   (iterate newton-step)
-                   (take *newton-iterations*)
-                   (partition 2 1)
-                   (drop-while (complement converged?))
-                   first)]
-    (assert x "Didn't converge.")
-    x))
+        tolerance (double *newton-tolerance*)
+        converged? (fn [x y]
+                     (loop [idx (dec (row-count x))]
+                       (if (neg? idx)
+                         true
+                         (when (within-tolerance? tolerance (mget x idx) (mget y idx))
+                           (recur (dec idx))))))]
+    (loop [xn-1 (newton-step x) iters (long *newton-iterations*)]
+      (if-not (zero? iters)
+        (let [xn (newton-step xn-1)]
+          (if (converged? xn-1 xn)
+            xn
+            (recur xn (dec iters))))
+        (assert xn-1 "Didn't converge.")))))
 
 (defn linear-step [circuit a z x _]
   (let [z (add z (source-stamp circuit x :transient))]
     (solve a z)))
 
 (defn transient-analysis
-  ([circuit time-step simulation-time]
+  ([circuit ^double time-step ^double simulation-time]
    (transient-analysis circuit time-step simulation-time (dc-operating-point circuit)))
-  ([circuit time-step simulation-time {:keys [a z x]}]
-   (let [ts (range 0 simulation-time time-step)
-         step (if (-> circuit meta :non-linear?)
+  ([circuit ^double time-step ^double simulation-time {:keys [a z x]}]
+   (let [step (if (-> circuit meta :non-linear?)
                 (partial non-linear-step circuit a z)
                 (partial linear-step circuit a z))]
-     (->> ts
-          (reductions step x)
-          (map vector ts)))))
+     (loop [t 0.0 x x acc (transient [])]
+       (if (> t simulation-time)
+         (persistent! acc)
+         (let [x (step x t)]
+           (recur (+ t time-step) x (conj! acc [t x]))))))))
 
 ;; Frontend
 
