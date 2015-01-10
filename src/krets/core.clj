@@ -3,6 +3,7 @@
             [clojure.core.matrix.protocols :as mp]
             [clojure.string :as s]
             [clojure.walk :as w]
+            [clojure.java.shell :as sh]
             [clojure.pprint :as pp])
   (:import [java.awt Color]
            [javax.swing JFrame]
@@ -289,6 +290,15 @@
                              (time (doall (transient-analysis circuit dt simulation-time dc-result))))]]
       (print-result circuit series)
       (plot-result circuit series))))
+
+(def ^:dynamic *spice-command* "ngspice")
+
+(defn spice [circuit]
+  (let [{:keys [out err ^long exit]} (sh/sh *spice-command* "-b" :in (-> circuit meta :netlist))]
+    (when out
+      (println out))
+    (when (not (zero? exit))
+      (println err))))
 
 (defn process-file [f]
   (-> f slurp parse-netlist batch))

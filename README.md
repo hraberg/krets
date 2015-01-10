@@ -53,6 +53,7 @@ This is the technique used by Spice and most other simulators.
 * http://www.falstad.com/circuit/ (Java)
 * https://github.com/zupolgec/circuit-simulator (JavaScript)
 * https://github.com/Qucs/qucs/ (C++)
+* http://www.gnucap.org/ (C++)
 * https://github.com/ahkab/ahkab (Python)
 * http://www.livespice.org/ (C#)
 
