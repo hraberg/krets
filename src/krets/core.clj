@@ -301,36 +301,35 @@
 (def ^:dynamic *newton-tolerance* 1e-8)
 (def ^:dynamic *newton-iterations* 500)
 
-(defn non-linear-step [circuit a z x _]
+(defn non-linear-step [circuit a z x]
   (let [z (add z (source-stamp circuit x :transient))
-        newton-tolerance (double *newton-tolerance*)
-        newton-step (fn [x]
-                      (let [a (add a (conductance-stamp circuit x :non-linear))
-                            z (add z (source-stamp circuit x :non-linear))]
-                        (solve a z)))]
-    (loop [xn-1 (newton-step x) iters (long *newton-iterations*)]
-      (if-not (zero? iters)
-        (let [xn (newton-step xn-1)]
-          (if (equals xn-1 xn newton-tolerance)
+        newton-tolerance (double *newton-tolerance*)]
+    (loop [xn-1 x iters (long *newton-iterations*)]
+      (if (zero? iters)
+        (assert xn-1 "Didn't converge.")
+        (let [xn (solve (add a (conductance-stamp circuit xn-1 :non-linear))
+                        (add z (source-stamp circuit xn-1 :non-linear)))]
+          (if (equals xn xn-1 newton-tolerance)
             xn
-            (recur xn (dec iters))))
-        (assert xn-1 "Didn't converge.")))))
+            (recur xn (dec iters))))))))
 
-(defn linear-step [circuit a z x _]
-  (let [z (add z (source-stamp circuit x :transient))]
-    (solve a z)))
+(defn linear-step [circuit a z x]
+  (solve a (add z (source-stamp circuit x :transient))))
+
+(defn transient-step-fn [circuit]
+  (if (-> circuit meta :non-linear?)
+    non-linear-step
+    linear-step))
 
 (defn transient-analysis
   ([circuit ^double time-step ^double simulation-time]
    (transient-analysis circuit time-step simulation-time (dc-operating-point circuit)))
   ([circuit ^double time-step ^double simulation-time {:keys [a z x]}]
-   (let [step (if (-> circuit meta :non-linear?)
-                (partial non-linear-step circuit a z)
-                (partial linear-step circuit a z))]
+   (let [step (partial (transient-step-fn circuit) circuit a z)]
      (loop [t 0.0 x x acc (transient [])]
        (if (> t simulation-time)
          (persistent! acc)
-         (let [x (step x t)]
+         (let [x (step x)]
            (recur (+ t time-step) x (conj! acc [t x]))))))))
 
 ;; Frontend
