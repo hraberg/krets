@@ -135,15 +135,12 @@
 
 ;; This fn doesn't stamp the voltage sources in their rows outside the conductance sub matrix.
 (defn compiled-conductance-stamp [circuit linearity]
-  (let [a (gensym 'a)
-        x (gensym 'x)
-        g (gensym 'g)
-        opts (gensym 'opts)
+  (let [[a x g opts] (map gensym '[a x g opts])
         ts (case linearity
             :linear [:r :c]
             :transient []
             :non-linear non-linear-elements)
-        es (vec (apply concat (map circuit ts)))]
+        es (vec (mapcat circuit ts))]
     `(let [~opts ~(options circuit)
            ~(vec (map (comp symbol first) es)) (map (partial conductance-element-fn ~opts) ~es)]
        (fn [~a ~x]
@@ -188,14 +185,12 @@
 
 (defn compiled-source-stamp [circuit linearity]
   (let [n (-> circuit meta :number-of-nodes long)
-        z (gensym 'z)
-        x (gensym 'x)
-        opts (gensym 'opts)
+        [z x opts] (map gensym '[z x opts])
         ts (case linearity
              :linear [:v :i]
              :transient [:c]
              :non-linear non-linear-elements)
-        es (vec (apply concat (map circuit ts)))]
+        es (vec (mapcat circuit ts))]
     `(let [~opts ~(options circuit)
            ~(vec (map (comp symbol first) es)) (map (partial source-element-fn ~opts) ~es)]
        (fn [~z ~x]
