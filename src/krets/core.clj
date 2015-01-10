@@ -67,15 +67,15 @@
 
   (defn mget
     (^double [^SimpleMatrix m ^long row]
-             (.get m row))
+             (.unsafe_get (.getMatrix m) row 0))
     (^double [^SimpleMatrix m ^long row ^long col]
-             (.get m row col)))
+             (.unsafe_get (.getMatrix m) row col)))
 
   (defn mset!
     ([^SimpleMatrix m ^long row ^double v]
-     (.set m row v))
+     (.unsafe_set (.getMatrix m) row 0 v))
     ([^SimpleMatrix m ^long row ^long col ^double v]
-     (.set m row col v)))
+     (.unsafe_set (.getMatrix m) row col v)))
 
   (defn add ^SimpleMatrix [^SimpleMatrix a ^SimpleMatrix b]
     (.plus a b))
