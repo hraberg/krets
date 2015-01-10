@@ -27,7 +27,6 @@ Tests and implementation guidance from http://www.ecircuitcenter.com/SPICEtopics
 * http://www.rolandus.com/blog/2014/02/14/analog-circuit-behavior-acb/
 * http://www.arturia.com/cs-80v/tae%C2%AE
 * http://www.cytomic.com/drop
-* http://www.livespice.org/
 
 Industry conference for plugin developers.
 
@@ -55,6 +54,7 @@ This is the technique used by Spice and most other simulators.
 * https://github.com/zupolgec/circuit-simulator (JavaScript)
 * https://github.com/Qucs/qucs/ (C++)
 * https://github.com/ahkab/ahkab (Python)
+* http://www.livespice.org/ (C#)
 
 ### Wave Digital Filters
 
