@@ -7,5 +7,6 @@
                  [org.jfree/jfreechart "1.0.19"]
                  [net.mikera/core.matrix "0.32.1"]
                  [net.mikera/vectorz-clj "0.28.0"]
-                 [clatrix "0.4.0"]]
+                 [clatrix "0.4.0"]
+                 [com.googlecode.efficient-java-matrix-library/ejml "0.25"]]
   :main krets.core)

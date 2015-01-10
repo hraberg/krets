@@ -9,16 +9,87 @@
            [javax.swing JFrame]
            [org.jfree.chart ChartFactory ChartPanel]
            [org.jfree.chart.plot XYPlot]
-           [org.jfree.data.xy XYSeries XYSeriesCollection]))
+           [org.jfree.data.xy XYSeries XYSeriesCollection]
+           [org.ejml.simple SimpleMatrix]))
 
 (set! *warn-on-reflection* true)
 (set! *unchecked-math* :warn-on-boxed)
 
-(x/set-current-implementation :vectorz)
+(defonce ^:dynamic *matrix-backend* [:core.matrix :vectorz])
 
-(def low-key (comp keyword s/lower-case))
+;; Matrix ops
+
+(defmulti load-matrix-backend (fn [[backend impl :as matrix-backend]]
+                                (alter-var-root #'*matrix-backend* (constantly matrix-backend))
+                                backend))
+
+(defmethod load-matrix-backend :core.matrix [[_ impl]]
+  (x/set-current-implementation impl)
+
+  (defn zero-matrix [^long rows ^long cols]
+    (x/zero-matrix rows cols))
+
+  (defn zero-vector [^long length]
+    (x/zero-vector length))
+
+  (defn solve [a b]
+    (mp/solve a b))
+
+  (defn mget
+    (^double [m ^long row]
+             (x/mget m row))
+    (^double [m ^long row ^long col]
+             (x/mget m row col)))
+
+  (defn mset!
+    ([m ^long row ^double v]
+     (x/mset! m row v))
+    ([m ^long row ^long col ^double v]
+     (x/mset! m row col v)))
+
+  (defn add [a b]
+    (x/add a b))
+
+  (defn eseq [m]
+    (x/eseq m))
+
+  *matrix-backend*)
+
+(defmethod load-matrix-backend :ejml [_]
+  (defn zero-matrix ^SimpleMatrix [^long rows ^long cols]
+    (SimpleMatrix. rows cols))
+
+  (defn zero-vector ^SimpleMatrix [^long length]
+    (zero-matrix length 1))
+
+  (defn solve ^SimpleMatrix [^SimpleMatrix a ^SimpleMatrix b]
+    (.solve a b))
+
+  (defn mget
+    (^double [^SimpleMatrix m ^long row]
+             (.get m row))
+    (^double [^SimpleMatrix m ^long row ^long col]
+             (.get m row col)))
+
+  (defn mset!
+    ([^SimpleMatrix m ^long row ^double v]
+     (.set m row v))
+    ([^SimpleMatrix m ^long row ^long col ^double v]
+     (.set m row col v)))
+
+  (defn add ^SimpleMatrix [^SimpleMatrix a ^SimpleMatrix b]
+    (.plus a b))
+
+  (defn eseq [^SimpleMatrix m]
+    (seq (.getData (.getMatrix m))))
+
+  *matrix-backend*)
+
+(load-matrix-backend *matrix-backend*)
 
 ;; Netlist parser
+
+(def low-key (comp keyword s/lower-case))
 
 (def spice-metric-prefixes
   {:f 1e-15
@@ -108,12 +179,12 @@
 (defn a-matrix [circuit]
   (let [n (-> circuit meta :number-of-nodes double)
         m (-> circuit meta :number-of-voltage-sources double)]
-    (x/zero-matrix (+ n m) (+ n m))))
+    (zero-matrix (+ n m) (+ n m))))
 
 (defn x-or-z-vector [circuit]
   (let [n (-> circuit meta :number-of-nodes double)
         m (-> circuit meta :number-of-voltage-sources double)]
-    (x/zero-vector (+ n m))))
+    (zero-vector (+ n m))))
 
 (defmulti conductance-element-fn (fn [opts e] (element-type e)))
 
@@ -130,16 +201,16 @@
         is (double (get-in models [model :is]))
         is-by-vt (/ is vt)]
     (fn ^double [x]
-      (let [vd (double (x/mget x (dec n1)))]
+      (let [vd (double (mget x (dec n1)))]
         (* is-by-vt (Math/exp (/ vd vt)))))))
 
 ;; This fn doesn't stamp the voltage sources in their rows outside the conductance sub matrix.
 (defn compiled-conductance-stamp [circuit linearity]
   (let [[a x g opts] (map gensym '[a x g opts])
         ts (case linearity
-            :linear [:r :c]
-            :transient []
-            :non-linear non-linear-elements)
+             :linear [:r :c]
+             :transient []
+             :non-linear non-linear-elements)
         es (vec (mapcat circuit ts))]
     `(let [~opts ~(options circuit)
            ~(vec (map (comp symbol first) es)) (map (partial conductance-element-fn ~opts) ~es)]
@@ -151,8 +222,8 @@
                         ^long col [n1 n2]
                         :when (not (or (ground? row) (ground? col)))
                         :let [row (dec row) col (dec col)]]
-                    `(x/mset! ~a ~row ~col (+ (double (x/mget ~a ~row ~col))
-                                              ~(if (= row col) `~g `(- ~g)))))))
+                    `(mset! ~a ~row ~col (+ (double (mget ~a ~row ~col))
+                                            ~(if (= row col) `~g `(- ~g)))))))
          ~a))))
 
 (defn conductance-stamp [circuit x linearity]
@@ -164,14 +235,14 @@
 (defmethod source-element-fn :c [{:keys [^double time-step]} [_ _ _ ^double c]]
   (let [g (/ c time-step)]
     (fn ^double [^long row x]
-      (* g (double (x/mget x row))))))
+      (* g (double (mget x row))))))
 
 (defmethod source-element-fn :d [{:keys [models]} [_ ^double n1 _ model]]
   (let [vt 0.025875
         is (double (get-in models [model :is]))
         is-by-vt (/ is vt)]
     (fn ^double [^long _ x]
-      (let [vd (double (x/mget x (dec n1)))
+      (let [vd (double (mget x (dec n1)))
             exp-vd-by-vt (Math/exp (/ vd vt))
             geq (* is-by-vt exp-vd-by-vt)
             id (* is (- exp-vd-by-vt 1))]
@@ -202,8 +273,8 @@
                        real-row (case t
                                   (:i, :c, :d) row
                                   :v (+ idx n))]]
-             `(x/mset! ~z ~real-row (+ (double (x/mget ~z ~real-row))
-                                       (~sign (.invokePrim ~(with-meta (symbol id) {:tag "clojure.lang.IFn$LOD"}) ~row ~x)))))
+             `(mset! ~z ~real-row (+ (double (mget ~z ~real-row))
+                                     (~sign (.invokePrim ~(with-meta (symbol id) {:tag "clojure.lang.IFn$LOD"}) ~row ~x)))))
          ~z))))
 
 (defn source-stamp [circuit x linearity]
@@ -225,21 +296,21 @@
   ([circuit x]
    (let [a (conductance-stamp circuit x :linear)
          z (source-stamp circuit x :linear)]
-     {:a a :z z :x (mp/solve a z)})))
+     {:a a :z z :x (solve a z)})))
 
 (def ^:dynamic *newton-tolerance* 1e-7)
 (def ^:dynamic *newton-iterations* 500)
 
 (defn non-linear-step [circuit a z x _]
-  (let [z (x/add z (source-stamp circuit x :transient))
+  (let [z (add z (source-stamp circuit x :transient))
         newton-step (fn [x]
-                      (let [a (x/add a (conductance-stamp circuit x :non-linear))
-                            z (x/add z (source-stamp circuit x :non-linear))]
-                        (mp/solve a z)))
+                      (let [a (add a (conductance-stamp circuit x :non-linear))
+                            z (add z (source-stamp circuit x :non-linear))]
+                        (solve a z)))
         within-tolerance? (fn [^double x ^double y]
                             (< (/ (Math/abs (- y x)) (Math/abs y)) (double *newton-tolerance*)))
         converged? (fn [[x y]]
-                     (every? true? (map within-tolerance? x y)))
+                     (every? true? (map within-tolerance? (eseq x) (eseq y))))
         [_ x] (->> x
                    (iterate newton-step)
                    (take *newton-iterations*)
@@ -250,20 +321,20 @@
     x))
 
 (defn linear-step [circuit a z x _]
-  (let [z (x/add z (source-stamp circuit x :transient))]
-    (mp/solve a z)))
+  (let [z (add z (source-stamp circuit x :transient))]
+    (solve a z)))
 
 (defn transient-analysis
   ([circuit time-step simulation-time]
    (transient-analysis circuit time-step simulation-time (dc-operating-point circuit)))
   ([circuit time-step simulation-time {:keys [a z x]}]
-    (let [ts (range 0 simulation-time time-step)
-          step (if (-> circuit meta :non-linear?)
-                 (partial non-linear-step circuit a z)
-                 (partial linear-step circuit a z))]
-      (->> ts
-           (reductions step x)
-           (map vector ts)))))
+   (let [ts (range 0 simulation-time time-step)
+         step (if (-> circuit meta :non-linear?)
+                (partial non-linear-step circuit a z)
+                (partial linear-step circuit a z))]
+     (->> ts
+          (reductions step x)
+          (map vector ts)))))
 
 ;; Frontend
 
@@ -286,9 +357,9 @@
                 (for [[k ^double v :as node] nodes]
                   {(node-label node)
                    (format node-format
-                           (x/mget x (case k
-                                       "V" (dec v)
-                                       "I" (+ n v))))})))))))
+                           (mget x (case k
+                                     "V" (dec v)
+                                     "I" (+ n v))))})))))))
 
 (defn xy-series
   ([title x y]
@@ -338,17 +409,22 @@
                    :let [v (double v)]]
                (xy-series (node-label node)
                           ts
-                          (map #(x/mget % (case k
-                                            "V" (dec v)
-                                            "I" (+ n v))) xs) ))))))
+                          (map #(mget % (case k
+                                          "V" (dec v)
+                                          "I" (+ n v))) xs) ))))))
 
 (defn batch [circuit]
   (let [circuit (compile-circuit circuit)]
     (println (-> circuit meta :title))
     (pp/print-table [(options circuit)])
     (println "DC Operating Point Analysis")
-    (let [dc-result (time (dc-operating-point circuit))]
-      (pp/print-table [dc-result])
+    (let [{:keys [a z x] :as dc-result} (time (dc-operating-point circuit))]
+      (println "A")
+      (println a)
+      (println "z")
+      (println z)
+      (println "x")
+      (println x)
       (doseq [[_ dt simulation-time] (:.tran (commands circuit))
               :let [series (do (println "Transient Analysis" dt simulation-time)
                                (time (doall (transient-analysis circuit dt simulation-time dc-result))))]]

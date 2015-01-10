@@ -78,6 +78,7 @@ Yet another approach, based on random walks:
 ### Dependencies
 
 * https://github.com/mikera/core.matrix
+* https://code.google.com/p/efficient-java-matrix-library/
 * http://www.jfree.org/
 
 ## License
