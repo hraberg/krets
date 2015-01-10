@@ -1,7 +1,5 @@
 (ns krets.core
-  (:require [clojure.core.matrix :as x]
-            [clojure.core.matrix.protocols :as mp]
-            [clojure.string :as s]
+  (:require [clojure.string :as s]
             [clojure.walk :as w]
             [clojure.java.shell :as sh]
             [clojure.pprint :as pp])
@@ -15,77 +13,31 @@
 (set! *warn-on-reflection* true)
 (set! *unchecked-math* :warn-on-boxed)
 
-(defonce ^:dynamic *matrix-backend* [:core.matrix :vectorz])
-
 ;; Matrix ops
 
-(defmulti load-matrix-backend (fn [[backend impl :as matrix-backend]]
-                                (alter-var-root #'*matrix-backend* (constantly matrix-backend))
-                                backend))
+(defn zero-matrix [^long rows ^long cols]
+  (SimpleMatrix. rows cols))
 
-(defmethod load-matrix-backend :core.matrix [[_ impl]]
-  (x/set-current-implementation impl)
+(defn solve [^SimpleMatrix a ^SimpleMatrix b]
+  (.solve a b))
 
-  (defn zero-matrix [^long rows ^long cols]
-    (x/zero-matrix rows cols))
+(defn add [^SimpleMatrix a ^SimpleMatrix b]
+  (.plus a b))
 
-  (defn zero-vector [^long length]
-    (x/zero-vector length))
+(defn equals [^SimpleMatrix a ^SimpleMatrix b ^double epsilon]
+  (.isIdentical a b epsilon))
 
-  (defn solve [a b]
-    (mp/solve a b))
+(defn mget
+  (^double [^SimpleMatrix m ^long row]
+           (.unsafe_get (.getMatrix m) row 0))
+  (^double [^SimpleMatrix m ^long row ^long col]
+           (.unsafe_get (.getMatrix m) row col)))
 
-  (defn mget
-    (^double [m ^long row]
-             (x/mget m row))
-    (^double [m ^long row ^long col]
-             (x/mget m row col)))
-
-  (defn mset!
-    ([m ^long row ^double v]
-     (x/mset! m row v))
-    ([m ^long row ^long col ^double v]
-     (x/mset! m row col v)))
-
-  (defn add [a b]
-    (x/add a b))
-
-  (defn equals [a b ^double epsilon]
-    (x/equals a b epsilon))
-
-  *matrix-backend*)
-
-(defmethod load-matrix-backend :ejml [_]
-  (defn zero-matrix ^SimpleMatrix [^long rows ^long cols]
-    (SimpleMatrix. rows cols))
-
-  (defn zero-vector ^SimpleMatrix [^long length]
-    (zero-matrix length 1))
-
-  (defn solve ^SimpleMatrix [^SimpleMatrix a ^SimpleMatrix b]
-    (.solve a b))
-
-  (defn mget
-    (^double [^SimpleMatrix m ^long row]
-             (.unsafe_get (.getMatrix m) row 0))
-    (^double [^SimpleMatrix m ^long row ^long col]
-             (.unsafe_get (.getMatrix m) row col)))
-
-  (defn mset!
-    ([^SimpleMatrix m ^long row ^double v]
-     (.unsafe_set (.getMatrix m) row 0 v))
-    ([^SimpleMatrix m ^long row ^long col ^double v]
-     (.unsafe_set (.getMatrix m) row col v)))
-
-  (defn add ^SimpleMatrix [^SimpleMatrix a ^SimpleMatrix b]
-    (.plus a b))
-
-  (defn equals [^SimpleMatrix a ^SimpleMatrix b ^double epsilon]
-    (.isIdentical a b epsilon))
-
-  *matrix-backend*)
-
-(load-matrix-backend *matrix-backend*)
+(defn madd!
+  ([^SimpleMatrix m ^long row ^double v]
+   (.add (.getMatrix m) row 0 v))
+  ([^SimpleMatrix m ^long row ^long col ^double v]
+   (.add (.getMatrix m) row col v)))
 
 ;; Netlist parser
 
@@ -184,7 +136,7 @@
 (defn x-or-z-vector [circuit]
   (let [n (-> circuit meta :number-of-nodes double)
         m (-> circuit meta :number-of-voltage-sources double)]
-    (zero-vector (+ n m))))
+    (zero-matrix (+ n m) 1)))
 
 (defmulti conductance-element-fn (fn [opts e] (element-type e)))
 
@@ -222,8 +174,7 @@
                         ^long col [n1 n2]
                         :when (not (or (ground? row) (ground? col)))
                         :let [row (dec row) col (dec col)]]
-                    `(mset! ~a ~row ~col (+ (mget ~a ~row ~col)
-                                            ~(if (= row col) `~g `(- ~g)))))))
+                    `(madd! ~a ~row ~col ~(if (= row col) `~g `(- ~g))))))
          ~a))))
 
 (defn conductance-stamp [circuit x linearity]
@@ -273,8 +224,7 @@
                        real-row (case t
                                   (:i, :c, :d) row
                                   :v (+ idx n))]]
-             `(mset! ~z ~real-row (+ (mget ~z ~real-row)
-                                     (~sign (.invokePrim ~(with-meta (symbol id) {:tag "clojure.lang.IFn$LOD"}) ~row ~x)))))
+             `(madd! ~z ~real-row (~sign (.invokePrim ~(with-meta (symbol id) {:tag "clojure.lang.IFn$LOD"}) ~row ~x))))
          ~z))))
 
 (defn source-stamp [circuit x linearity]
