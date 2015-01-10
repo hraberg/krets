@@ -79,6 +79,9 @@
 (defn non-linear? [circuit]
   (boolean (some non-linear-elements (keys circuit))))
 
+(defn element-type [[[c]]]
+  (keyword (s/lower-case c)))
+
 (defn parse-netlist [netlist]
   (let [[title & lines] (-> netlist
                             (s/replace #"\n\+" "")
@@ -87,8 +90,7 @@
                      (remove (some-fn (re? #"^\*") (re? #"(?i)^.end$")))
                      (map #(s/split % #"[\s=,()]+"))
                      (w/postwalk (some-fn spice-number identity))
-                     (group-by (fn [[[c]]]
-                                 (keyword (s/lower-case c)))))]
+                     (group-by element-type))]
     (with-meta circuit
       (->> '[number-of-nodes number-of-voltage-sources time-step models non-linear?]
            (map (juxt keyword #((ns-resolve 'krets.core %) circuit)))
@@ -106,53 +108,69 @@
         m (-> circuit meta :number-of-voltage-sources double)]
     (x/zero-vector (+ n m))))
 
+(defn conductance-element-fn [circuit [_ ^double n1 n2 r-or-c-or-model :as e]]
+  (let [dt (-> circuit meta :time-step double)]
+    (case (element-type e)
+      :r (fn [x]
+           (/ (double r-or-c-or-model)))
+      :c (fn [x]
+           (/ (double r-or-c-or-model) dt))
+      :d (let [vt 0.025875
+               is (-> circuit meta :models (get-in [r-or-c-or-model "IS"]) double)
+               is-by-vt (/ is vt)]
+           (fn [x]
+             (let [vd (double (x/mget x (dec n1)))]
+               (* is-by-vt (Math/exp (/ vd vt)))))))))
+
 ;; This fn doesn't stamp the voltage sources in their rows outside the conductance sub matrix.
 (defn conductance-stamp [circuit x linearity]
-  (let [a (a-matrix circuit)
-        dt (-> circuit meta :time-step double)]
+  (let [a (a-matrix circuit)]
     (doseq [k (case linearity
                 :linear [:r :c]
                 :non-linear non-linear-elements)
-            [_ ^double n1 n2 r-or-c-or-model] (k circuit)
-            :let [g (double (case k
-                              :r (/ (double r-or-c-or-model))
-                              :c (/ (double r-or-c-or-model) dt)
-                              :d (let [vt 0.025875
-                                       is (-> circuit meta :models (get-in [r-or-c-or-model "IS"]) double)
-                                       vd (double (x/mget x (dec n1)))]
-                                   (* (/ is vt) (Math/exp (/ vd vt))))))]
-            ^long xm [n1 n2]
-            ^long ym [n1 n2]
-            :when (not (or (ground? xm) (ground? ym)))
-            :let [xm (dec xm) ym (dec ym)]]
-      (x/mset! a xm ym (+ (double (x/mget a xm ym))
-                          (if (= xm ym) g (- g)))))
+            [_ ^double n1 n2 :as e] (k circuit)
+            :let [g (double ((conductance-element-fn circuit e) x))]
+            ^long row [n1 n2]
+            ^long col [n1 n2]
+            :when (not (or (ground? row) (ground? col)))
+            :let [row (dec row) col (dec col)]]
+      (x/mset! a row col (+ (double (x/mget a row col))
+                            (if (= row col) g (- g)))))
     a))
+
+(defn source-element-fn [circuit [_ ^double n1 ^double n2 c-or-model ^double i :as e]]
+  (let [dt (-> circuit meta :time-step double)]
+    (case (element-type e)
+      :c (let [g (/ (double c-or-model) dt)]
+           (fn [row x]
+             (* g (double (x/mget x row)))))
+      :d (let [vt 0.025875
+               is (-> circuit meta :models (get-in [c-or-model "IS"]) double)
+               is-by-vt (/ is vt)]
+           (fn [row x]
+             (let [vd (double (x/mget x (dec n1)))
+                   exp-vd-by-vt (Math/exp (/ vd vt))
+                   geq (* is-by-vt exp-vd-by-vt)
+                   id (* is (- exp-vd-by-vt 1))]
+               (- id (* geq vd)))))
+      :i (constantly i))))
 
 (defn source-stamp [circuit x linearity]
   (let [z (x-or-z-vector circuit)
-        dt (-> circuit meta :time-step double)
         n (-> circuit meta :number-of-nodes long)]
     (doseq [k (case linearity
                 :linear [:v :i]
                 :transient [:c]
                 :non-linear non-linear-elements)
-            [^long idx [_ ^double n1 ^double n2 c-or-model ^double val]] (map-indexed vector (k circuit))
-            [^double xm sign] [[n1 -] [n2 +]]
-            :when (not (ground? xm))
-            :let [xm (dec xm)]]
+            [^long idx [_ ^double n1 ^double n2 :as e]] (map-indexed vector (k circuit))
+            :let [element-fn (source-element-fn circuit e)]
+            [^double row sign] [[n1 -] [n2 +]]
+            :when (not (ground? row))
+            :let [row (dec row)
+                  i-or-v (element-fn row x)]]
       (#(x/mset! z (case k
-                     (:i, :c, :d) xm
-                     :v (+ idx n))
-                 (sign (case k
-                         :c (* (/ (double c-or-model) dt) (double (x/mget x xm)))
-                         :d (let [vt 0.025875
-                                  is (-> circuit meta :models (get-in [c-or-model "IS"]) double)
-                                  vd (double (x/mget x (dec n1)))
-                                  geq (* (/ is vt) (Math/exp (/ vd vt)))
-                                  id (* is (- (Math/exp (/ vd vt)) 1))]
-                              (- id (* geq vd)))
-                         val)))))
+                     (:i, :c, :d) row
+                     :v (+ idx n)) (sign i-or-v))))
     z))
 
 (defn dc-operating-point
