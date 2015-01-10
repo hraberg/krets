@@ -50,8 +50,8 @@
   (defn add [a b]
     (x/add a b))
 
-  (defn row-count ^long [m]
-    (x/row-count m))
+  (defn equals [a b ^double epsilon]
+    (x/equals a b epsilon))
 
   *matrix-backend*)
 
@@ -80,8 +80,8 @@
   (defn add ^SimpleMatrix [^SimpleMatrix a ^SimpleMatrix b]
     (.plus a b))
 
-  (defn row-count ^long [^SimpleMatrix m]
-    (.numRows m))
+  (defn equals [^SimpleMatrix a ^SimpleMatrix b ^double epsilon]
+    (.isIdentical a b epsilon))
 
   *matrix-backend*)
 
@@ -201,7 +201,7 @@
         is (double (get-in models [model :is]))
         is-by-vt (/ is vt)]
     (fn ^double [x]
-      (let [vd (double (mget x (dec n1)))]
+      (let [vd (mget x (dec n1))]
         (* is-by-vt (Math/exp (/ vd vt)))))))
 
 ;; This fn doesn't stamp the voltage sources in their rows outside the conductance sub matrix.
@@ -222,7 +222,7 @@
                         ^long col [n1 n2]
                         :when (not (or (ground? row) (ground? col)))
                         :let [row (dec row) col (dec col)]]
-                    `(mset! ~a ~row ~col (+ (double (mget ~a ~row ~col))
+                    `(mset! ~a ~row ~col (+ (mget ~a ~row ~col)
                                             ~(if (= row col) `~g `(- ~g)))))))
          ~a))))
 
@@ -235,14 +235,14 @@
 (defmethod source-element-fn :c [{:keys [^double time-step]} [_ _ _ ^double c]]
   (let [g (/ c time-step)]
     (fn ^double [^long row x]
-      (* g (double (mget x row))))))
+      (* g (mget x row)))))
 
 (defmethod source-element-fn :d [{:keys [models]} [_ ^double n1 _ model]]
   (let [vt 0.025875
         is (double (get-in models [model :is]))
         is-by-vt (/ is vt)]
     (fn ^double [^long _ x]
-      (let [vd (double (mget x (dec n1)))
+      (let [vd (mget x (dec n1))
             exp-vd-by-vt (Math/exp (/ vd vt))
             geq (* is-by-vt exp-vd-by-vt)
             id (* is (- exp-vd-by-vt 1))]
@@ -267,13 +267,13 @@
        (fn [~z ~x]
          ~@(for [t ts
                  [^long idx [id n1 n2 :as e]] (map-indexed vector (t circuit))
-                 [^double row sign] [[n1 `-] [n2 `+]]
+                 [^long row sign] [[n1 `-] [n2 `+]]
                  :when (not (ground? row))
-                 :let [row (long (dec row))
+                 :let [row (dec row)
                        real-row (case t
                                   (:i, :c, :d) row
                                   :v (+ idx n))]]
-             `(mset! ~z ~real-row (+ (double (mget ~z ~real-row))
+             `(mset! ~z ~real-row (+ (mget ~z ~real-row)
                                      (~sign (.invokePrim ~(with-meta (symbol id) {:tag "clojure.lang.IFn$LOD"}) ~row ~x)))))
          ~z))))
 
@@ -298,29 +298,20 @@
          z (source-stamp circuit x :linear)]
      {:a a :z z :x (solve a z)})))
 
-(def ^:dynamic *newton-tolerance* 1e-7)
+(def ^:dynamic *newton-tolerance* 1e-8)
 (def ^:dynamic *newton-iterations* 500)
-
-(defn within-tolerance? [^double tolerance ^double x ^double y]
-  (< (/ (Math/abs (- y x)) (Math/abs y)) tolerance))
 
 (defn non-linear-step [circuit a z x _]
   (let [z (add z (source-stamp circuit x :transient))
+        newton-tolerance (double *newton-tolerance*)
         newton-step (fn [x]
                       (let [a (add a (conductance-stamp circuit x :non-linear))
                             z (add z (source-stamp circuit x :non-linear))]
-                        (solve a z)))
-        tolerance (double *newton-tolerance*)
-        converged? (fn [x y]
-                     (loop [idx (dec (row-count x))]
-                       (if (neg? idx)
-                         true
-                         (when (within-tolerance? tolerance (mget x idx) (mget y idx))
-                           (recur (dec idx))))))]
+                        (solve a z)))]
     (loop [xn-1 (newton-step x) iters (long *newton-iterations*)]
       (if-not (zero? iters)
         (let [xn (newton-step xn-1)]
-          (if (converged? xn-1 xn)
+          (if (equals xn-1 xn newton-tolerance)
             xn
             (recur xn (dec iters))))
         (assert xn-1 "Didn't converge.")))))
@@ -411,8 +402,7 @@
             :when (seq nodes)]
       (apply plot
              "t" "V"
-             (for [[k v :as node] nodes
-                   :let [v (double v)]]
+             (for [[k ^double v :as node] nodes]
                (xy-series (node-label node)
                           ts
                           (map #(mget % (case k
