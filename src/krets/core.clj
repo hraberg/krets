@@ -203,7 +203,7 @@
                                   (:i, :c, :d) row
                                   :v (+ idx n))]]
              `(x/mset! ~z ~real-row (+ (double (x/mget ~z ~real-row))
-                                       (double (~sign (~(symbol id) ~row ~x))))))
+                                       (~sign (double (~(symbol id) ~row ~x))))))
          ~z))))
 
 (defn source-stamp [circuit x linearity]
