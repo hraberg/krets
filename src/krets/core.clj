@@ -118,18 +118,18 @@
 (defmulti conductance-element-fn (fn [opts e] (element-type e)))
 
 (defmethod conductance-element-fn :r [_ [_ _ _ ^double r]]
-  (fn [x]
-    (/ r)))
+  (fn ^double [x]
+    (/ 1.0 r)))
 
 (defmethod conductance-element-fn :c [{:keys [^double time-step]} [_ _ _ ^double c]]
-  (fn [x]
+  (fn ^double [x]
     (/ c time-step)))
 
 (defmethod conductance-element-fn :d [{:keys [models]} [_ ^double n1 _ model]]
   (let [vt 0.025875
         is (double (get-in models [model :is]))
         is-by-vt (/ is vt)]
-    (fn [x]
+    (fn ^double [x]
       (let [vd (double (x/mget x (dec n1)))]
         (* is-by-vt (Math/exp (/ vd vt)))))))
 
@@ -146,7 +146,7 @@
        (fn [~a ~x]
          ~@(for [t ts
                  [id n1 n2 :as e] (t circuit)]
-             `(let [~g (double (~(symbol id) ~x))]
+             `(let [~g (.invokePrim ~(with-meta (symbol id) {:tag "clojure.lang.IFn$OD"}) ~x)]
                 ~@(for [^long row [n1 n2]
                         ^long col [n1 n2]
                         :when (not (or (ground? row) (ground? col)))
@@ -163,14 +163,14 @@
 
 (defmethod source-element-fn :c [{:keys [^double time-step]} [_ _ _ ^double c]]
   (let [g (/ c time-step)]
-    (fn [row x]
+    (fn ^double [^long row x]
       (* g (double (x/mget x row))))))
 
 (defmethod source-element-fn :d [{:keys [models]} [_ ^double n1 _ model]]
   (let [vt 0.025875
         is (double (get-in models [model :is]))
         is-by-vt (/ is vt)]
-    (fn [_ x]
+    (fn ^double [^long _ x]
       (let [vd (double (x/mget x (dec n1)))
             exp-vd-by-vt (Math/exp (/ vd vt))
             geq (* is-by-vt exp-vd-by-vt)
@@ -178,10 +178,10 @@
         (- id (* geq vd))))))
 
 (defmethod source-element-fn :i [_ [_ _ _ _ ^double i]]
-  (constantly i))
+  (fn ^double [^long _ x] i))
 
 (defmethod source-element-fn :v [_ [_ _ _ _ ^double v]]
-  (constantly v))
+  (fn ^double [^long _ x] v))
 
 (defn compiled-source-stamp [circuit linearity]
   (let [n (-> circuit meta :number-of-nodes long)
@@ -198,12 +198,12 @@
                  [^long idx [id n1 n2 :as e]] (map-indexed vector (t circuit))
                  [^double row sign] [[n1 `-] [n2 `+]]
                  :when (not (ground? row))
-                 :let [row (dec row)
+                 :let [row (long (dec row))
                        real-row (case t
                                   (:i, :c, :d) row
                                   :v (+ idx n))]]
              `(x/mset! ~z ~real-row (+ (double (x/mget ~z ~real-row))
-                                       (~sign (double (~(symbol id) ~row ~x))))))
+                                       (~sign (.invokePrim ~(with-meta (symbol id) {:tag "clojure.lang.IFn$LOD"}) ~row ~x)))))
          ~z))))
 
 (defn source-stamp [circuit x linearity]
@@ -283,8 +283,7 @@
        (concat [time-label] (map node-label nodes))
        (for [[t x] series]
          (apply merge {time-label (format time-format (double t))}
-                (for [[k v :as node] nodes
-                      :let [v (double v)]]
+                (for [[k ^double v :as node] nodes]
                   {(node-label node)
                    (format node-format
                            (x/mget x (case k
