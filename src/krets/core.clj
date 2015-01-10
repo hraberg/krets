@@ -190,7 +190,7 @@
 
 (defn transient-analysis
   ([circuit time-step simulation-time]
-   (transient-analysis circuit simulation-time time-step (dc-operating-point circuit)))
+   (transient-analysis circuit time-step simulation-time (dc-operating-point circuit)))
   ([circuit time-step simulation-time {:keys [a z x]}]
     (let [ts (range 0 simulation-time time-step)
           step (if (-> circuit meta :non-linear?)
@@ -282,10 +282,9 @@
   (println (-> circuit meta :title))
   (pp/print-table [(dissoc (meta circuit) :netlist :title)])
   (println "DC Operating Point Analysis")
-  (let [cs (commands circuit)
-        dc-result (time (dc-operating-point circuit))]
+  (let [dc-result (time (dc-operating-point circuit))]
     (pp/print-table [dc-result])
-    (doseq [[_ dt simulation-time] (:.tran cs)
+    (doseq [[_ dt simulation-time] (:.tran (commands circuit))
             :let [series (do (println "Transient Analysis" dt simulation-time)
                              (time (doall (transient-analysis circuit dt simulation-time dc-result))))]]
       (print-result circuit series)
