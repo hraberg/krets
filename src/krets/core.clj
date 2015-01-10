@@ -109,18 +109,18 @@
     (x/zero-vector (+ n m))))
 
 (defn conductance-element-fn [circuit [_ ^double n1 n2 r-or-c-or-model :as e]]
-  (let [dt (-> circuit meta :time-step double)]
-    (case (element-type e)
-      :r (fn [x]
-           (/ (double r-or-c-or-model)))
-      :c (fn [x]
-           (/ (double r-or-c-or-model) dt))
-      :d (let [vt 0.025875
-               is (-> circuit meta :models (get-in [r-or-c-or-model "IS"]) double)
-               is-by-vt (/ is vt)]
-           (fn [x]
-             (let [vd (double (x/mget x (dec n1)))]
-               (* is-by-vt (Math/exp (/ vd vt)))))))))
+  (case (element-type e)
+    :r (fn [x]
+         (/ (double r-or-c-or-model)))
+    :c (let [dt (-> circuit meta :time-step double)]
+         (fn [x]
+           (/ (double r-or-c-or-model) dt)))
+    :d (let [vt 0.025875
+             is (-> circuit meta :models (get-in [r-or-c-or-model "IS"]) double)
+             is-by-vt (/ is vt)]
+         (fn [x]
+           (let [vd (double (x/mget x (dec n1)))]
+             (* is-by-vt (Math/exp (/ vd vt))))))))
 
 ;; This fn doesn't stamp the voltage sources in their rows outside the conductance sub matrix.
 (defn conductance-stamp [circuit x linearity]
@@ -139,21 +139,21 @@
     a))
 
 (defn source-element-fn [circuit [_ ^double n1 ^double n2 c-or-model ^double i :as e]]
-  (let [dt (-> circuit meta :time-step double)]
-    (case (element-type e)
-      :c (let [g (/ (double c-or-model) dt)]
-           (fn [row x]
-             (* g (double (x/mget x row)))))
-      :d (let [vt 0.025875
-               is (-> circuit meta :models (get-in [c-or-model "IS"]) double)
-               is-by-vt (/ is vt)]
-           (fn [row x]
-             (let [vd (double (x/mget x (dec n1)))
-                   exp-vd-by-vt (Math/exp (/ vd vt))
-                   geq (* is-by-vt exp-vd-by-vt)
-                   id (* is (- exp-vd-by-vt 1))]
-               (- id (* geq vd)))))
-      :i (constantly i))))
+  (case (element-type e)
+    :c (let [dt (-> circuit meta :time-step double)
+             g (/ (double c-or-model) dt)]
+         (fn [row x]
+           (* g (double (x/mget x row)))))
+    :d (let [vt 0.025875
+             is (-> circuit meta :models (get-in [c-or-model "IS"]) double)
+             is-by-vt (/ is vt)]
+         (fn [row x]
+           (let [vd (double (x/mget x (dec n1)))
+                 exp-vd-by-vt (Math/exp (/ vd vt))
+                 geq (* is-by-vt exp-vd-by-vt)
+                 id (* is (- exp-vd-by-vt 1))]
+             (- id (* geq vd)))))
+    :i (constantly i)))
 
 (defn source-stamp [circuit x linearity]
   (let [z (x-or-z-vector circuit)
