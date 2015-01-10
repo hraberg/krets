@@ -78,10 +78,10 @@
     dt
     Double/NaN))
 
-(def non-linear-elements #{:d})
+(def non-linear-elements [:d])
 
 (defn non-linear? [circuit]
-  (boolean (some non-linear-elements (keys circuit))))
+  (boolean (some circuit non-linear-elements)))
 
 (defn element-type [[[c]]]
   (low-key c))
