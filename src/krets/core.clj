@@ -137,7 +137,7 @@
     (doseq [t (case linearity
                 :linear [:r :c]
                 :non-linear non-linear-elements)
-            [_ ^double n1 n2 :as e] (t circuit)
+            [_ n1 n2 :as e] (t circuit)
             :let [g (double ((conductance-element-fn circuit e) x))]
             ^long row [n1 n2]
             ^long col [n1 n2]
@@ -179,7 +179,7 @@
                 :linear [:v :i]
                 :transient [:c]
                 :non-linear non-linear-elements)
-            [^long idx [_ ^double n1 ^double n2 :as e]] (map-indexed vector (t circuit))
+            [^long idx [_ n1 n2 :as e]] (map-indexed vector (t circuit))
             :let [element-fn (source-element-fn circuit e)]
             [^double row sign] [[n1 -] [n2 +]]
             :when (not (ground? row))
