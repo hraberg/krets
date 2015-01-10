@@ -35,8 +35,8 @@
 (defn spice-number [s]
   (when-let [[_ x p] (and (string? s)
                           (re-find spice-number-pattern s))]
-    (* ^double (read-string x)
-       ^double (spice-metric-prefixes (some-> p s/lower-case keyword) 1))))
+    (* (double (read-string x))
+       (double (spice-metric-prefixes (some-> p s/lower-case keyword) 1)))))
 
 (defn re? [re]
   #(re-find re %))
@@ -108,14 +108,14 @@
 ;; This fn doesn't stamp the voltage sources in their rows outside the conductance sub matrix.
 (defn conductance-stamp [circuit x linearity]
   (let [a (a-matrix circuit)
-        dt (-> circuit meta :time-step)]
+        dt (-> circuit meta :time-step double)]
     (doseq [k (case linearity
                 :linear [:r :c]
                 :non-linear non-linear-elements)
             [_ ^double n1 n2 r-or-c-or-model] (k circuit)
             :let [g (double (case k
-                              :r (/ ^double r-or-c-or-model)
-                              :c (/ ^double r-or-c-or-model ^double dt)
+                              :r (/ (double r-or-c-or-model))
+                              :c (/ (double r-or-c-or-model) dt)
                               :d (let [vt 0.025875
                                        is (-> circuit meta :models (get-in [r-or-c-or-model "IS"]) double)
                                        vd (double (x/mget x (dec n1)))]
@@ -124,7 +124,7 @@
             ^long ym [n1 n2]
             :when (not (or (ground? xm) (ground? ym)))
             :let [xm (dec xm) ym (dec ym)]]
-      (x/mset! a xm ym (+ ^double (x/mget a xm ym)
+      (x/mset! a xm ym (+ (double (x/mget a xm ym))
                           (if (= xm ym) g (- g)))))
     a))
 
@@ -144,7 +144,7 @@
                      (:i, :c, :d) xm
                      :v (+ idx n))
                  (sign (case k
-                         :c (* (/ ^double c-or-model dt) (double (x/mget x xm)))
+                         :c (* (/ (double c-or-model) dt) (double (x/mget x xm)))
                          :d (let [vt 0.025875
                                   is (-> circuit meta :models (get-in [c-or-model "IS"]) double)
                                   vd (double (x/mget x (dec n1)))
@@ -171,10 +171,10 @@
                       (let [a (x/add a (conductance-stamp circuit x :non-linear))
                             z (x/add z (source-stamp circuit x :non-linear))]
                         (mp/solve a z)))
-        within? (fn [^double x ^double y]
-                  (< (/ (Math/abs (- y x)) (Math/abs (- y))) (double *newton-tolerance*)))
+        within-tolerance? (fn [^double x ^double y]
+                            (< (/ (Math/abs (- y x)) (Math/abs y)) (double *newton-tolerance*)))
         converged? (fn [[x y]]
-                     (every? true? (map within? x y)))
+                     (every? true? (map within-tolerance? x y)))
         [_ x] (->> x
                    (iterate newton-step)
                    (take *newton-iterations*)
