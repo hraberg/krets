@@ -9,8 +9,7 @@
            [org.jfree.chart.plot XYPlot]
            [org.jfree.data.xy XYSeries XYSeriesCollection]
            [org.ejml.data DenseMatrix64F]
-           [org.ejml.ops CommonOps MatrixFeatures]
-           [clojure.lang IFn$OD]))
+           [org.ejml.ops CommonOps MatrixFeatures]))
 
 (set! *warn-on-reflection* true)
 (set! *unchecked-math* :warn-on-boxed)
@@ -135,112 +134,102 @@
 
 ;; MNA
 
-(defn voltage-diff-fn ^IFn$OD [n+ n-]
-  (let [x (gensym 'x)
-        term (fn [^long n]
+(defn voltage-diff [x n+ n-]
+  (let [term (fn [^long n]
                (if (ground? n)
                  0.0
                  `(mget ~x ~(dec n) 0)))]
-    (eval `(fn ^double [~x]
-             (- ~(term n+) ~(term n-))))))
+    `(- ~(term n+) ~(term n-))))
 
-(defmulti conductance-element-fn (fn [opts e] (element-type e)))
+(defn conductance-stamp [a n+ n- g]
+  (for [^long row [n+ n-]
+        ^long col [n+ n-]
+        :when (not (or (ground? row) (ground? col)))
+        :let [row (dec row) col (dec col)]]
+    `(madd! ~a ~row ~col ~(if (= row col) `~g `(- ~g)))))
 
-(defmethod conductance-element-fn :r [_ [_ _ _ ^double r]]
-  (fn ^double [x]
-    (/ 1.0 r)))
+(defmulti conductance-element (fn [opts e x a] (element-type e)))
 
-(defmethod conductance-element-fn :c [{:keys [^double time-step]} [_ _ _ ^double c]]
-  (fn ^double [x]
-    (/ c time-step)))
+(defmethod conductance-element :r [_ [_ _ _ ^double r] _ _]
+  `(/ 1.0 ~r))
 
-(defmethod conductance-element-fn :d [{:keys [models]} [_ anode cathode model]]
+(defmethod conductance-element :c [{:keys [^double time-step]} [_ _ _ ^double c] _ _]
+  `(/ ~c ~time-step))
+
+(defmethod conductance-element :d [{:keys [models]} [_ anode cathode model] x _]
   (let [vt 0.025875
         is (-> model models :is double)
-        is-by-vt (/ is vt)
-        vd-fn (voltage-diff-fn anode cathode)]
-    (fn ^double [x]
-      (let [vd (.invokePrim vd-fn x)]
-        (* is-by-vt (Math/exp (/ vd vt)))))))
+        is-by-vt (/ is vt)]
+    `(let [vd# ~(voltage-diff x anode cathode)]
+       (* ~is-by-vt (Math/exp (/ vd# ~vt))))))
 
 ;; This fn doesn't stamp the voltage sources in their rows outside the conductance sub matrix.
 (defn compiled-conductance-stamp [circuit linearity]
-  (let [[a x g opts] (map gensym '[a x g opts])
-        {:keys [^long number-of-rows]} (meta circuit)
+  (let [[a x g] (map gensym '[a x g])
+        {:keys [^long number-of-rows] :as opts} (meta circuit)
         ts (case linearity
              :linear [:r :c]
              :transient []
              :non-linear non-linear-elements)
         es (vec (mapcat circuit ts))]
-    `(let [~opts ~(options circuit)
-           ~(vec (map (comp symbol first) es)) (map (partial conductance-element-fn ~opts) ~es)]
-       (fn [~x]
-         (let [~a (zero-matrix ~number-of-rows ~number-of-rows)]
-           ~@(for [t ts
-                   [id n+ n- :as e] (t circuit)]
-               `(let [~g (.invokePrim ~(with-meta (symbol id) {:tag `IFn$OD}) ~x)]
-                  ~@(for [^long row [n+ n-]
-                          ^long col [n+ n-]
-                          :when (not (or (ground? row) (ground? col)))
-                          :let [row (dec row) col (dec col)]]
-                      `(madd! ~a ~row ~col ~(if (= row col) `~g `(- ~g))))))
-           ~a)))))
+    `(fn [~x]
+       (let [~a (zero-matrix ~number-of-rows ~number-of-rows)]
+         ~@(for [[id n+ n- :as e] es]
+             `(let [~g ~(conductance-element opts e x a)]
+                ~@(conductance-stamp a n+ n- g)))
+         ~a))))
 
-(defmulti source-element-fn (fn [opts e] (element-type e)))
+(defmulti source-element (fn [opts e x z] (element-type e)))
 
-(defmethod source-element-fn :c [{:keys [^double time-step]} [_ n+ n- ^double c]]
-  (let [g (/ c time-step)
-        ;; TODO: why do we need the reverse order here?
-        ;;       this used to be in the reverse in the actual netlist, but think that was wrong.
-        ;;       this is how it's setup in https://xyce.sandia.gov/downloads/_assets/documents/Xyce_Math_Formulation.pdf page 30.
-        vd-fn (voltage-diff-fn n- n+)]
-    (fn ^double [x]
-      (* g (.invokePrim vd-fn x)))))
+(defmethod source-element :c [{:keys [^double time-step]} [_ n+ n- ^double c] x z]
+  (let [g (/ c time-step)]
+    ;; TODO: why do we need the reverse order here?
+    ;;       this used to be in the reverse in the actual netlist, but think that was wrong.
+    ;;       this is how it's setup in https://xyce.sandia.gov/downloads/_assets/documents/Xyce_Math_Formulation.pdf page 30.
+    `(* ~g ~(voltage-diff x n- n+))))
 
-(defmethod source-element-fn :d [{:keys [models]} [_ anode cathode model]]
+(defmethod source-element :d [{:keys [models]} [_ anode cathode model] x z]
   (let [vt 0.025875
         is (-> model models :is double)
-        is-by-vt (/ is vt)
-        vd-fn (voltage-diff-fn anode cathode)]
-    (fn ^double [x]
-      (let [vd (.invokePrim vd-fn x)
-            exp-vd-by-vt (Math/exp (/ vd vt))
-            geq (* is-by-vt exp-vd-by-vt)
-            id (* is (- exp-vd-by-vt 1.0))]
-        ;; TODO: should the other row be (+ (- id) (* geq vd)) - that is, they are in different directions?
-        ;;       ie. more generic, simply reverse the terms, (- (* geq vd) id)
-        ;;       so, we cannot call this fn just once, alternatively, we need to stamp in here.
-        ;;       could this be related to the above problem as well?
-        (- id (* geq vd))))))
+        is-by-vt (/ is vt)]
+    `(let [vd# ~(voltage-diff x anode cathode)
+           exp-vd-by-vt# (Math/exp (/ vd# ~vt))
+           geq# (* ~is-by-vt exp-vd-by-vt#)
+           id# (* ~is (- exp-vd-by-vt# 1.0))]
+      ;; TODO: should the other row be (+ (- id) (* geq vd)) - that is, they are in different directions?
+      ;;       ie. more generic, simply reverse the terms, (- (* geq vd) id)
+      ;;       so, we cannot call this fn just once, alternatively, we need to stamp in here.
+      ;;       could this be related to the above problem as well?
+      (- id# (* geq# vd#)))))
 
-(defmethod source-element-fn :i [_ [_ _ _ _ ^double i]]
-  (fn ^double [x] i))
+(defmethod source-element :i [_ [_ _ _ _ ^double i] x z]
+  `~i)
 
-(defmethod source-element-fn :v [_ [_ _ _ _ ^double v]]
-  (fn ^double [x] v))
+(defmethod source-element :v [_ [_ _ _ _ ^double v] x z]
+  `~v)
 
 (defn compiled-source-stamp [circuit linearity]
   (let [{:keys [^long number-of-rows ^long number-of-nodes]} (meta circuit)
-        [z x i-or-v opts] (map gensym '[z x i-or-v opts])
+        [z x i-or-v] (map gensym '[z x i-or-v])
+        opts (meta circuit)
         ts (case linearity
              :linear [:v :i]
              :transient [:c]
              :non-linear non-linear-elements)
         es (vec (mapcat circuit ts))]
-    `(let [~opts ~(options circuit)
-           ~(vec (map (comp symbol first) es)) (map (partial source-element-fn ~opts) ~es)]
-       (fn [~x]
-         (let [~z (zero-matrix ~number-of-rows 1)]
-           ~@(for [t ts
-                   [^long idx [id n+ n- :as e]] (map-indexed vector (t circuit))]
-               `(let [~i-or-v (.invokePrim ~(with-meta (symbol id) {:tag `IFn$OD}) ~x)]
-                  ~@(for [[^long row sign] [[n+ `-] [n- `+]]
-                          :when (not (ground? row))
-                          :let [row (case t
-                                      (:i, :c, :d) (dec row)
-                                      :v (+ idx number-of-nodes))]]
-                      `(madd! ~z ~row 0 (~sign ~i-or-v)))))
-           ~z)))))
+    `(fn [~x]
+       (let [~z (zero-matrix ~number-of-rows 1)]
+         ~@(for [t ts
+                 [^long idx [id n+ n- :as e]] (map-indexed vector (t circuit))]
+             `(let [~i-or-v ~(source-element opts e x z)]
+                ~@(for [[^long row sign] [[n+ `-] [n- `+]]
+                        :when (not (ground? row))
+                        :let [row (case t
+                                    (:i, :c, :d) (dec row)
+                                    :v (+ idx number-of-nodes))]]
+                    ;; TODO: replace this with proper stamping in the element fns.
+                    `(madd! ~z ~row 0 (~sign ~i-or-v)))))
+        ~z))))
 
 (defn compile-circuit [circuit]
   (if (-> circuit meta :compiled?)
