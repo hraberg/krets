@@ -23,8 +23,11 @@
 (definline zero-matrix [rows cols]
   `(DenseMatrix64F. ~rows ~cols))
 
+(definline row-count [m]
+  `(.numRows ~(mtag m)))
+
 (definline solve [a b]
-  `(doto (zero-matrix (.numRows ~(mtag b)) 1)
+  `(doto (zero-matrix (row-count ~a) 1)
      (->> (CommonOps/solve ~(mtag a) ~b))))
 
 (definline add! [a b]
@@ -81,6 +84,10 @@
        set
        count))
 
+(defn number-of-rows [circuit]
+  (+ (long (number-of-voltage-sources circuit))
+     (long (number-of-nodes circuit))))
+
 (defn commands [circuit]
   (group-by (comp low-key first) (:. circuit)))
 
@@ -122,21 +129,11 @@
                      (w/postwalk (some-fn spice-number identity))
                      (group-by element-type))]
     (with-meta circuit
-      (->> '[number-of-nodes number-of-voltage-sources time-step models non-linear?]
+      (->> '[number-of-nodes number-of-voltage-sources number-of-rows time-step models non-linear?]
            (map (juxt keyword #((ns-resolve 'krets.core %) circuit)))
            (apply merge {:netlist netlist :title title})))))
 
 ;; MNA
-
-(defn a-matrix [circuit]
-  (let [n (-> circuit meta :number-of-nodes long)
-        m (-> circuit meta :number-of-voltage-sources long)]
-    (zero-matrix (+ n m) (+ n m))))
-
-(defn x-or-z-vector [circuit]
-  (let [n (-> circuit meta :number-of-nodes long)
-        m (-> circuit meta :number-of-voltage-sources long)]
-    (zero-matrix (+ n m) 1)))
 
 (defmulti conductance-element-fn (fn [opts e] (element-type e)))
 
@@ -179,7 +176,8 @@
          ~a))))
 
 (defn conductance-stamp [circuit x linearity]
-  (let [a (a-matrix circuit)]
+  (let [rows (row-count x)
+        a (zero-matrix rows rows)]
     ((-> circuit meta :compiled-conductance-stamp linearity) a x)))
 
 (defmulti source-element-fn (fn [opts e] (element-type e)))
@@ -230,7 +228,7 @@
          ~z))))
 
 (defn source-stamp [circuit x linearity]
-  (let [z (x-or-z-vector circuit)]
+  (let [z (zero-matrix (row-count x) 1)]
     ((-> circuit meta :compiled-source-stamp linearity) z x)))
 
 (defn compile-circuit [circuit]
@@ -247,7 +245,7 @@
 
 (defn dc-operating-point
   ([circuit]
-   (dc-operating-point circuit (x-or-z-vector circuit)))
+   (dc-operating-point circuit (zero-matrix (-> circuit meta :number-of-rows) 1)))
   ([circuit x]
    (let [a (conductance-stamp circuit x :linear)
          z (source-stamp circuit x :linear)]
