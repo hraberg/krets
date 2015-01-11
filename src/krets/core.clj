@@ -192,6 +192,7 @@
   (let [g (/ c time-step)
         ;; TODO: why do we need the reverse order here?
         ;;       this used to be in the reverse in the actual netlist, but think that was wrong.
+        ;;       this is how it's setup in https://xyce.sandia.gov/downloads/_assets/documents/Xyce_Math_Formulation.pdf page 30.
         vd-fn (voltage-diff-fn n- n+)]
     (fn ^double [x]
       (* g (.invokePrim vd-fn x)))))
