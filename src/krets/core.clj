@@ -175,10 +175,11 @@
                     `(madd! ~a ~row ~col ~(if (= row col) `~g `(- ~g))))))
          ~a))))
 
-(defn conductance-stamp [circuit x linearity]
-  (let [rows (row-count x)
-        a (zero-matrix rows rows)]
-    ((-> circuit meta :compiled-conductance-stamp linearity) a x)))
+(defn condutance-stamp-fn [circuit linearity]
+  (let [{:keys [number-of-rows compiled-conductance-stamp]} (meta circuit)
+        stamp (compiled-conductance-stamp linearity)]
+    (fn [x]
+      (stamp (zero-matrix number-of-rows number-of-rows) x))))
 
 (defmulti source-element-fn (fn [opts e] (element-type e)))
 
@@ -227,9 +228,11 @@
              `(madd! ~z ~real-row 0 (~sign (.invokePrim ~(with-meta (symbol id) {:tag `IFn$LOD}) ~row ~x))))
          ~z))))
 
-(defn source-stamp [circuit x linearity]
-  (let [z (zero-matrix (row-count x) 1)]
-    ((-> circuit meta :compiled-source-stamp linearity) z x)))
+(defn source-stamp-fn [circuit linearity]
+  (let [{:keys [number-of-rows compiled-source-stamp]} (meta circuit)
+        stamp (compiled-source-stamp linearity)]
+    (fn [x]
+      (stamp (zero-matrix number-of-rows 1) x))))
 
 (defn compile-circuit [circuit]
   (if (-> circuit meta :compiled?)
@@ -247,38 +250,46 @@
   ([circuit]
    (dc-operating-point circuit (zero-matrix (-> circuit meta :number-of-rows) 1)))
   ([circuit x]
-   (let [a (conductance-stamp circuit x :linear)
-         z (source-stamp circuit x :linear)]
+   (let [a ((condutance-stamp-fn circuit :linear) x)
+         z ((source-stamp-fn circuit :linear) x)]
      {:a a :z z :x (solve a z)})))
 
 (def ^:dynamic *newton-tolerance* 1e-8)
 (def ^:dynamic *newton-iterations* 500)
 
-(defn non-linear-step [circuit a z x]
-  (let [z (add! (source-stamp circuit x :transient) z)
-        newton-tolerance (double *newton-tolerance*)]
-    (loop [xn-1 x iters (long *newton-iterations*)]
-      (if (zero? iters)
-        (assert xn-1 "Didn't converge.")
-        (let [xn (solve (add! (conductance-stamp circuit xn-1 :non-linear) a)
-                        (add! (source-stamp circuit xn-1 :non-linear) z))]
-          (if (equals xn xn-1 newton-tolerance)
-            xn
-            (recur xn (dec iters))))))))
+(defn non-linear-step-fn [circuit a z]
+  (let [transient-source-stamp (source-stamp-fn circuit :transient)
+        non-linear-conductance-stamp (condutance-stamp-fn circuit :non-linear)
+        non-linear-source-stamp (source-stamp-fn circuit :non-linear)
+        newton-tolerance (double *newton-tolerance*)
+        newton-iterations (long *newton-iterations*)]
+    (fn [x]
+      (let [z (add! (transient-source-stamp x) z)]
+        (loop [xn-1 x iters newton-iterations]
+          (if (zero? iters)
+            (assert xn-1 "Didn't converge.")
+            (let [xn (solve (add! (non-linear-conductance-stamp xn-1) a)
+                            (add! (non-linear-source-stamp xn-1) z))]
+              (if (equals xn xn-1 newton-tolerance)
+                xn
+                (recur xn (dec iters))))))))))
 
-(defn linear-step [circuit a z x]
-  (solve a (add! (source-stamp circuit x :transient) z)))
+(defn linear-step-fn [circuit a z]
+  (let [transient-source-stamp (source-stamp-fn circuit :transient)]
+    (fn [x]
+      (solve a (add! (transient-source-stamp x) z)))))
 
-(defn transient-step-fn [circuit]
-  (if (-> circuit meta :non-linear?)
-    non-linear-step
-    linear-step))
+(defn transient-step-fn [circuit a z]
+  (let [step-fn (if (-> circuit meta :non-linear?)
+                  non-linear-step-fn
+                  linear-step-fn)]
+    (step-fn circuit a z)))
 
 (defn transient-analysis
   ([circuit ^double time-step ^double simulation-time]
    (transient-analysis circuit time-step simulation-time (dc-operating-point circuit)))
   ([circuit ^double time-step ^double simulation-time {:keys [a z x]}]
-   (let [step (partial (transient-step-fn circuit) circuit a z)]
+   (let [step (transient-step-fn circuit a z)]
      (loop [t 0.0 x x acc (transient [])]
        (if (> t simulation-time)
          (persistent! acc)
