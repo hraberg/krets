@@ -8,7 +8,8 @@
            [org.jfree.chart ChartFactory ChartPanel]
            [org.jfree.chart.plot XYPlot]
            [org.jfree.data.xy XYSeries XYSeriesCollection]
-           [org.ejml.simple SimpleMatrix]
+           [org.ejml.data DenseMatrix64F]
+           [org.ejml.ops CommonOps MatrixFeatures]
            [clojure.lang IFn$OD IFn$LOD]))
 
 (set! *warn-on-reflection* true)
@@ -17,25 +18,26 @@
 ;; Matrix ops
 
 (defn mtag [m]
-  (with-meta m {:tag `SimpleMatrix}))
+  (with-meta m {:tag `DenseMatrix64F}))
 
 (definline zero-matrix [rows cols]
-  `(SimpleMatrix. ~rows ~cols))
+  `(DenseMatrix64F. ~rows ~cols))
 
 (definline solve [a b]
-  `(.solve ~(mtag a) ~b))
+  `(doto (zero-matrix (.numRows ~(mtag b)) 1)
+     (->> (CommonOps/solve ~(mtag a) ~b))))
 
-(definline add [a b]
-  `(.plus ~(mtag a) ~b))
+(definline add! [a b]
+  `(doto ~(mtag a) (-> (CommonOps/addEquals ~b))))
 
 (definline equals [a b epsilon]
-  `(.isIdentical ~(mtag a) ~b ~epsilon))
+  `(MatrixFeatures/isEquals ~(mtag a) ~b ~epsilon))
 
 (definline mget [m row col]
-  `(.unsafe_get (.getMatrix ~(mtag m)) ~row ~col))
+  `(.unsafe_get ~(mtag m) ~row ~col))
 
 (definline madd! [m row col v]
-  `(.add (.getMatrix ~(mtag m)) ~row ~col ~v))
+  `(.add ~(mtag m) ~row ~col ~v))
 
 ;; Netlist parser
 
@@ -250,19 +252,19 @@
 (def ^:dynamic *newton-iterations* 500)
 
 (defn non-linear-step [circuit a z x]
-  (let [z (add z (source-stamp circuit x :transient))
+  (let [z (add! (source-stamp circuit x :transient) z)
         newton-tolerance (double *newton-tolerance*)]
     (loop [xn-1 x iters (long *newton-iterations*)]
       (if (zero? iters)
         (assert xn-1 "Didn't converge.")
-        (let [xn (solve (add a (conductance-stamp circuit xn-1 :non-linear))
-                        (add z (source-stamp circuit xn-1 :non-linear)))]
+        (let [xn (solve (add! (conductance-stamp circuit xn-1 :non-linear) a)
+                        (add! (source-stamp circuit xn-1 :non-linear) z))]
           (if (equals xn xn-1 newton-tolerance)
             xn
             (recur xn (dec iters))))))))
 
 (defn linear-step [circuit a z x]
-  (solve a (add z (source-stamp circuit x :transient))))
+  (solve a (add! (source-stamp circuit x :transient) z)))
 
 (defn transient-step-fn [circuit]
   (if (-> circuit meta :non-linear?)
