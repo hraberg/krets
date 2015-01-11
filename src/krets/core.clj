@@ -169,10 +169,10 @@
            ~(vec (map (comp symbol first) es)) (map (partial conductance-element-fn ~opts) ~es)]
        (fn [~a ~x]
          ~@(for [t ts
-                 [id n1 n2 :as e] (t circuit)]
+                 [id n+ n- :as e] (t circuit)]
              `(let [~g (.invokePrim ~(with-meta (symbol id) {:tag `IFn$OD}) ~x)]
-                ~@(for [^long row [n1 n2]
-                        ^long col [n1 n2]
+                ~@(for [^long row [n+ n-]
+                        ^long col [n+ n-]
                         :when (not (or (ground? row) (ground? col)))
                         :let [row (dec row) col (dec col)]]
                     `(madd! ~a ~row ~col ~(if (= row col) `~g `(- ~g))))))
@@ -219,8 +219,8 @@
            ~(vec (map (comp symbol first) es)) (map (partial source-element-fn ~opts) ~es)]
        (fn [~z ~x]
          ~@(for [t ts
-                 [^long idx [id n1 n2 :as e]] (map-indexed vector (t circuit))
-                 [^long row sign] [[n1 `-] [n2 `+]]
+                 [^long idx [id n+ n- :as e]] (map-indexed vector (t circuit))
+                 [^long row sign] [[n+ `-] [n- `+]]
                  :when (not (ground? row))
                  :let [row (dec row)
                        real-row (case t
