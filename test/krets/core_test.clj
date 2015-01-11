@@ -6,8 +6,8 @@
 (deftest sanity-check
   (doseq [f (file-seq (io/file "test/krets/"))
           :when (re-find #"\.cir$" (str f))]
-    (with-redefs [plot (fn [xt yt & _]
-                         (println "< plotting " xt yt ">"))]
+    (with-redefs [plot (constantly nil)
+                  print-result (constantly nil)]
       (let [fail (volatile! nil)
             out (with-out-str
                   (try

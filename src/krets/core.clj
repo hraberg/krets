@@ -110,7 +110,7 @@
   (low-key c))
 
 (defn options [circuit]
-  (dissoc (meta circuit) :netlist :title :compiled-conductance-stamp :compiled-source-stamp))
+  (dissoc (meta circuit) :netlist :title :compiled? :compiled-conductance-stamp :compiled-source-stamp))
 
 (defn parse-netlist [netlist]
   (let [[title & lines] (-> netlist
@@ -196,7 +196,7 @@
       (let [vd (mget x (dec n1) 0)
             exp-vd-by-vt (Math/exp (/ vd vt))
             geq (* is-by-vt exp-vd-by-vt)
-            id (* is (- exp-vd-by-vt 1))]
+            id (* is (- exp-vd-by-vt 1.0))]
         (- id (* geq vd))))))
 
 (defmethod source-element-fn :i [_ [_ _ _ _ ^double i]]
@@ -204,7 +204,6 @@
 
 (defmethod source-element-fn :v [_ [_ _ _ _ ^double v]]
   (fn ^double [^long _ x] v))
-
 (defn compiled-source-stamp [circuit linearity]
   (let [n (-> circuit meta :number-of-nodes long)
         [z x opts] (map gensym '[z x opts])
@@ -232,13 +231,16 @@
     ((-> circuit meta (get-in [:compiled-source-stamp linearity])) z x)))
 
 (defn compile-circuit [circuit]
-  (->> (for [s '[compiled-source-stamp compiled-conductance-stamp]
-             :let [compiler (ns-resolve 'krets.core s)]]
-         {(keyword s)
-          (apply merge (for [t [:linear :transient :non-linear]]
-                         {t (eval (compiler circuit t))}))})
-       (apply merge)
-       (vary-meta circuit merge)))
+  (if (-> circuit meta :compiled?)
+    circuit
+    (->> (for [s '[compiled-source-stamp compiled-conductance-stamp]
+               :let [compiler (ns-resolve 'krets.core s)]]
+           {:compiled? true
+            (keyword s)
+            (apply merge (for [t [:linear :transient :non-linear]]
+                           {t (eval (compiler circuit t))}))})
+         (apply merge)
+         (vary-meta circuit merge))))
 
 (defn dc-operating-point
   ([circuit]
