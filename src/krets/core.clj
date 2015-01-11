@@ -204,6 +204,7 @@
 
 (defmethod source-element-fn :v [_ [_ _ _ _ ^double v]]
   (fn ^double [^long _ x] v))
+
 (defn compiled-source-stamp [circuit linearity]
   (let [n (-> circuit meta :number-of-nodes long)
         [z x opts] (map gensym '[z x opts])
