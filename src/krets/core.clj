@@ -157,6 +157,7 @@
 ;; This fn doesn't stamp the voltage sources in their rows outside the conductance sub matrix.
 (defn compiled-conductance-stamp [circuit linearity]
   (let [[a x g opts] (map gensym '[a x g opts])
+        {:keys [^long number-of-rows]} (meta circuit)
         ts (case linearity
              :linear [:r :c]
              :transient []
@@ -164,22 +165,17 @@
         es (vec (mapcat circuit ts))]
     `(let [~opts ~(options circuit)
            ~(vec (map (comp symbol first) es)) (map (partial conductance-element-fn ~opts) ~es)]
-       (fn [~a ~x]
-         ~@(for [t ts
-                 [id n+ n- :as e] (t circuit)]
-             `(let [~g (.invokePrim ~(with-meta (symbol id) {:tag `IFn$OD}) ~x)]
-                ~@(for [^long row [n+ n-]
-                        ^long col [n+ n-]
-                        :when (not (or (ground? row) (ground? col)))
-                        :let [row (dec row) col (dec col)]]
-                    `(madd! ~a ~row ~col ~(if (= row col) `~g `(- ~g))))))
-         ~a))))
-
-(defn condutance-stamp-fn [circuit linearity]
-  (let [{:keys [number-of-rows compiled-conductance-stamp]} (meta circuit)
-        stamp (compiled-conductance-stamp linearity)]
-    (fn [x]
-      (stamp (zero-matrix number-of-rows number-of-rows) x))))
+       (fn [~x]
+         (let [~a (zero-matrix ~number-of-rows ~number-of-rows)]
+           ~@(for [t ts
+                   [id n+ n- :as e] (t circuit)]
+               `(let [~g (.invokePrim ~(with-meta (symbol id) {:tag `IFn$OD}) ~x)]
+                  ~@(for [^long row [n+ n-]
+                          ^long col [n+ n-]
+                          :when (not (or (ground? row) (ground? col)))
+                          :let [row (dec row) col (dec col)]]
+                      `(madd! ~a ~row ~col ~(if (= row col) `~g `(- ~g))))))
+           ~a)))))
 
 (defmulti source-element-fn (fn [opts e] (element-type e)))
 
@@ -207,7 +203,7 @@
   (fn ^double [^long _ x] v))
 
 (defn compiled-source-stamp [circuit linearity]
-  (let [n (-> circuit meta :number-of-nodes long)
+  (let [{:keys [^long number-of-rows ^long number-of-nodes]} (meta circuit)
         [z x opts] (map gensym '[z x opts])
         ts (case linearity
              :linear [:v :i]
@@ -216,23 +212,18 @@
         es (vec (mapcat circuit ts))]
     `(let [~opts ~(options circuit)
            ~(vec (map (comp symbol first) es)) (map (partial source-element-fn ~opts) ~es)]
-       (fn [~z ~x]
-         ~@(for [t ts
-                 [^long idx [id n+ n- :as e]] (map-indexed vector (t circuit))
-                 [^long row sign] [[n+ `-] [n- `+]]
-                 :when (not (ground? row))
-                 :let [row (dec row)
-                       real-row (case t
-                                  (:i, :c, :d) row
-                                  :v (+ idx n))]]
-             `(madd! ~z ~real-row 0 (~sign (.invokePrim ~(with-meta (symbol id) {:tag `IFn$LOD}) ~row ~x))))
-         ~z))))
-
-(defn source-stamp-fn [circuit linearity]
-  (let [{:keys [number-of-rows compiled-source-stamp]} (meta circuit)
-        stamp (compiled-source-stamp linearity)]
-    (fn [x]
-      (stamp (zero-matrix number-of-rows 1) x))))
+       (fn [~x]
+         (let [~z (zero-matrix ~number-of-rows 1)]
+           ~@(for [t ts
+                   [^long idx [id n+ n- :as e]] (map-indexed vector (t circuit))
+                   [^long row sign] [[n+ `-] [n- `+]]
+                   :when (not (ground? row))
+                   :let [row (dec row)
+                         real-row (case t
+                                    (:i, :c, :d) row
+                                    :v (+ idx number-of-nodes))]]
+               `(madd! ~z ~real-row 0 (~sign (.invokePrim ~(with-meta (symbol id) {:tag `IFn$LOD}) ~row ~x))))
+           ~z)))))
 
 (defn compile-circuit [circuit]
   (if (-> circuit meta :compiled?)
@@ -250,17 +241,19 @@
   ([circuit]
    (dc-operating-point circuit (zero-matrix (-> circuit meta :number-of-rows) 1)))
   ([circuit x]
-   (let [a ((condutance-stamp-fn circuit :linear) x)
-         z ((source-stamp-fn circuit :linear) x)]
+   (let [{:keys [compiled-source-stamp compiled-conductance-stamp]} (meta circuit)
+         a ((compiled-conductance-stamp :linear) x)
+         z ((compiled-source-stamp :linear) x)]
      {:a a :z z :x (solve a z)})))
 
 (def ^:dynamic *newton-tolerance* 1e-8)
 (def ^:dynamic *newton-iterations* 500)
 
 (defn non-linear-step-fn [circuit a z]
-  (let [transient-source-stamp (source-stamp-fn circuit :transient)
-        non-linear-conductance-stamp (condutance-stamp-fn circuit :non-linear)
-        non-linear-source-stamp (source-stamp-fn circuit :non-linear)
+  (let [{:keys [compiled-source-stamp compiled-conductance-stamp]} (meta circuit)
+        transient-source-stamp (compiled-source-stamp :transient)
+        non-linear-conductance-stamp (compiled-conductance-stamp :non-linear)
+        non-linear-source-stamp (compiled-source-stamp :non-linear)
         newton-tolerance (double *newton-tolerance*)
         newton-iterations (long *newton-iterations*)]
     (fn [x]
@@ -275,7 +268,8 @@
                 (recur xn (dec iters))))))))))
 
 (defn linear-step-fn [circuit a z]
-  (let [transient-source-stamp (source-stamp-fn circuit :transient)]
+  (let [{:keys [compiled-source-stamp]} (meta circuit)
+        transient-source-stamp (compiled-source-stamp :transient)]
     (fn [x]
       (solve a (add! (transient-source-stamp x) z)))))
 
