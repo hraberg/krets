@@ -8,7 +8,8 @@
            [org.jfree.chart ChartFactory ChartPanel]
            [org.jfree.chart.plot XYPlot]
            [org.jfree.data.xy XYSeries XYSeriesCollection]
-           [org.ejml.simple SimpleMatrix]))
+           [org.ejml.simple SimpleMatrix]
+           [clojure.lang IFn$OD IFn$LOD]))
 
 (set! *warn-on-reflection* true)
 (set! *unchecked-math* :warn-on-boxed)
@@ -166,7 +167,7 @@
        (fn [~a ~x]
          ~@(for [t ts
                  [id n1 n2 :as e] (t circuit)]
-             `(let [~g (.invokePrim ~(with-meta (symbol id) {:tag "clojure.lang.IFn$OD"}) ~x)]
+             `(let [~g (.invokePrim ~(with-meta (symbol id) {:tag `IFn$OD}) ~x)]
                 ~@(for [^long row [n1 n2]
                         ^long col [n1 n2]
                         :when (not (or (ground? row) (ground? col)))
@@ -221,7 +222,7 @@
                        real-row (case t
                                   (:i, :c, :d) row
                                   :v (+ idx n))]]
-             `(madd! ~z ~real-row 0 (~sign (.invokePrim ~(with-meta (symbol id) {:tag "clojure.lang.IFn$LOD"}) ~row ~x))))
+             `(madd! ~z ~real-row 0 (~sign (.invokePrim ~(with-meta (symbol id) {:tag `IFn$LOD}) ~row ~x))))
          ~z))))
 
 (defn source-stamp [circuit x linearity]
