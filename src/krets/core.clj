@@ -206,6 +206,10 @@
             exp-vd-by-vt (Math/exp (/ vd vt))
             geq (* is-by-vt exp-vd-by-vt)
             id (* is (- exp-vd-by-vt 1.0))]
+        ;; TODO: should the other row be (+ (- id) (* geq vd)) - that is, they are in different directions?
+        ;;       ie. more generic, simply reverse the terms, (- (* geq vd) id)
+        ;;       so, we cannot call this fn just once, alternatively, we need to stamp in here.
+        ;;       could this be related to the above problem as well?
         (- id (* geq vd))))))
 
 (defmethod source-element-fn :i [_ [_ _ _ _ ^double i]]
