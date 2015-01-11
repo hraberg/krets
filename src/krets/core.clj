@@ -148,12 +148,13 @@
   (fn ^double [x]
     (/ c time-step)))
 
-(defmethod conductance-element-fn :d [{:keys [models]} [_ ^double n1 _ model]]
+(defmethod conductance-element-fn :d [{:keys [models]} [_ ^long anode _ model]]
   (let [vt 0.025875
         is (double (get-in models [model :is]))
-        is-by-vt (/ is vt)]
+        is-by-vt (/ is vt)
+        anode (dec anode)]
     (fn ^double [x]
-      (let [vd (mget x (dec n1) 0)]
+      (let [vd (mget x anode 0)]
         (* is-by-vt (Math/exp (/ vd vt)))))))
 
 ;; This fn doesn't stamp the voltage sources in their rows outside the conductance sub matrix.
@@ -188,12 +189,13 @@
     (fn ^double [^long row x]
       (* g (mget x row 0)))))
 
-(defmethod source-element-fn :d [{:keys [models]} [_ ^double n1 _ model]]
+(defmethod source-element-fn :d [{:keys [models]} [_ ^long anode _ model]]
   (let [vt 0.025875
         is (double (get-in models [model :is]))
-        is-by-vt (/ is vt)]
+        is-by-vt (/ is vt)
+        anode (dec anode)]
     (fn ^double [^long _ x]
-      (let [vd (mget x (dec n1) 0)
+      (let [vd (mget x anode 0)
             exp-vd-by-vt (Math/exp (/ vd vt))
             geq (* is-by-vt exp-vd-by-vt)
             id (* is (- exp-vd-by-vt 1.0))]
