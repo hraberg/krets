@@ -36,9 +36,6 @@
 (definline madd! [m row col v]
   `(.add (.getMatrix ~(mtag m)) ~row ~col ~v))
 
-(definline madd! [m row col v]
-  `(.add (.getMatrix ~(mtag m)) ~row ~col ~v))
-
 ;; Netlist parser
 
 (def low-key (comp keyword s/lower-case))
