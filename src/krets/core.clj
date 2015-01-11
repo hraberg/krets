@@ -15,29 +15,29 @@
 
 ;; Matrix ops
 
-(defn zero-matrix [^long rows ^long cols]
-  (SimpleMatrix. rows cols))
+(defn mtag [m]
+  (with-meta m {:tag `SimpleMatrix}))
 
-(defn solve [^SimpleMatrix a ^SimpleMatrix b]
-  (.solve a b))
+(definline zero-matrix [rows cols]
+  `(SimpleMatrix. ~rows ~cols))
 
-(defn add [^SimpleMatrix a ^SimpleMatrix b]
-  (.plus a b))
+(definline solve [a b]
+  `(.solve ~(mtag a) ~b))
 
-(defn equals [^SimpleMatrix a ^SimpleMatrix b ^double epsilon]
-  (.isIdentical a b epsilon))
+(definline add [a b]
+  `(.plus ~(mtag a) ~b))
 
-(defn mget
-  (^double [^SimpleMatrix m ^long row]
-           (.unsafe_get (.getMatrix m) row 0))
-  (^double [^SimpleMatrix m ^long row ^long col]
-           (.unsafe_get (.getMatrix m) row col)))
+(definline equals [a b epsilon]
+  `(.isIdentical ~(mtag a) ~b ~epsilon))
 
-(defn madd!
-  ([^SimpleMatrix m ^long row ^double v]
-   (.add (.getMatrix m) row 0 v))
-  ([^SimpleMatrix m ^long row ^long col ^double v]
-   (.add (.getMatrix m) row col v)))
+(definline mget [m row col]
+  `(.unsafe_get (.getMatrix ~(mtag m)) ~row ~col))
+
+(definline madd! [m row col v]
+  `(.add (.getMatrix ~(mtag m)) ~row ~col ~v))
+
+(definline madd! [m row col v]
+  `(.add (.getMatrix ~(mtag m)) ~row ~col ~v))
 
 ;; Netlist parser
 
@@ -153,7 +153,7 @@
         is (double (get-in models [model :is]))
         is-by-vt (/ is vt)]
     (fn ^double [x]
-      (let [vd (mget x (dec n1))]
+      (let [vd (mget x (dec n1) 0)]
         (* is-by-vt (Math/exp (/ vd vt)))))))
 
 ;; This fn doesn't stamp the voltage sources in their rows outside the conductance sub matrix.
@@ -186,14 +186,14 @@
 (defmethod source-element-fn :c [{:keys [^double time-step]} [_ _ _ ^double c]]
   (let [g (/ c time-step)]
     (fn ^double [^long row x]
-      (* g (mget x row)))))
+      (* g (mget x row 0)))))
 
 (defmethod source-element-fn :d [{:keys [models]} [_ ^double n1 _ model]]
   (let [vt 0.025875
         is (double (get-in models [model :is]))
         is-by-vt (/ is vt)]
     (fn ^double [^long _ x]
-      (let [vd (mget x (dec n1))
+      (let [vd (mget x (dec n1) 0)
             exp-vd-by-vt (Math/exp (/ vd vt))
             geq (* is-by-vt exp-vd-by-vt)
             id (* is (- exp-vd-by-vt 1))]
@@ -224,7 +224,7 @@
                        real-row (case t
                                   (:i, :c, :d) row
                                   :v (+ idx n))]]
-             `(madd! ~z ~real-row (~sign (.invokePrim ~(with-meta (symbol id) {:tag "clojure.lang.IFn$LOD"}) ~row ~x))))
+             `(madd! ~z ~real-row 0 (~sign (.invokePrim ~(with-meta (symbol id) {:tag "clojure.lang.IFn$LOD"}) ~row ~x))))
          ~z))))
 
 (defn source-stamp [circuit x linearity]
@@ -305,7 +305,7 @@
                    (format node-format
                            (mget x (case k
                                      "V" (dec v)
-                                     "I" (+ n v))))})))))))
+                                     "I" (+ n v)) 0))})))))))
 
 (defn xy-series
   ([title x y]
@@ -356,7 +356,7 @@
                           ts
                           (map #(mget % (case k
                                           "V" (dec v)
-                                          "I" (+ n v))) xs) ))))))
+                                          "I" (+ n v)) 0) xs) ))))))
 
 (defn batch [circuit]
   (let [circuit (compile-circuit circuit)]
