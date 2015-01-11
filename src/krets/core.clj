@@ -129,13 +129,13 @@
 ;; MNA
 
 (defn a-matrix [circuit]
-  (let [n (-> circuit meta :number-of-nodes double)
-        m (-> circuit meta :number-of-voltage-sources double)]
+  (let [n (-> circuit meta :number-of-nodes long)
+        m (-> circuit meta :number-of-voltage-sources long)]
     (zero-matrix (+ n m) (+ n m))))
 
 (defn x-or-z-vector [circuit]
-  (let [n (-> circuit meta :number-of-nodes double)
-        m (-> circuit meta :number-of-voltage-sources double)]
+  (let [n (-> circuit meta :number-of-nodes long)
+        m (-> circuit meta :number-of-voltage-sources long)]
     (zero-matrix (+ n m) 1)))
 
 (defmulti conductance-element-fn (fn [opts e] (element-type e)))
@@ -150,7 +150,7 @@
 
 (defmethod conductance-element-fn :d [{:keys [models]} [_ ^long anode _ model]]
   (let [vt 0.025875
-        is (double (get-in models [model :is]))
+        is (-> model models :is double)
         is-by-vt (/ is vt)
         anode (dec anode)]
     (fn ^double [x]
@@ -180,7 +180,7 @@
 
 (defn conductance-stamp [circuit x linearity]
   (let [a (a-matrix circuit)]
-    ((-> circuit meta (get-in [:compiled-conductance-stamp linearity])) a x)))
+    ((-> circuit meta :compiled-conductance-stamp linearity) a x)))
 
 (defmulti source-element-fn (fn [opts e] (element-type e)))
 
@@ -191,7 +191,7 @@
 
 (defmethod source-element-fn :d [{:keys [models]} [_ ^long anode _ model]]
   (let [vt 0.025875
-        is (double (get-in models [model :is]))
+        is (-> model models :is double)
         is-by-vt (/ is vt)
         anode (dec anode)]
     (fn ^double [^long _ x]
@@ -231,7 +231,7 @@
 
 (defn source-stamp [circuit x linearity]
   (let [z (x-or-z-vector circuit)]
-    ((-> circuit meta (get-in [:compiled-source-stamp linearity])) z x)))
+    ((-> circuit meta :compiled-source-stamp linearity) z x)))
 
 (defn compile-circuit [circuit]
   (if (-> circuit meta :compiled?)
