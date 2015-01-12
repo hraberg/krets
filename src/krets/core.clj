@@ -62,17 +62,18 @@
 
 (defn spice-number [s]
   (when-let [[_ x p] (and (string? s)
-                          (re-find spice-number-pattern s))]
+                          (re-find spice-number-pattern
+                                   (cond->> s (re-find #"^\.\d" s) (str "0"))))]
     (* (double (read-string x))
        (double (spice-metric-prefixes (some-> p low-key) 1)))))
 
 (defn re? [re]
-  #(re-find re %))
+  #(re-find re (str %)))
 
 (def ground? zero?)
 
 (defn number-of-voltage-sources [netlist]
-  (count (mapcat #{:v :u} netlist)))
+  (count (mapcat netlist [:v :u])))
 
 (defn number-of-nodes [netlist]
   (->> (dissoc netlist :.)
@@ -179,6 +180,7 @@
 
 ;; ideal op amp, this is only the linear version.
 ;; "The operational amplifier could be considered as a special case of a voltage controlled current source with infinite forward transconductance G." - QUCS technical.pdf p 117
+;; alternatively, an op amp can be modelled as a VCVS with high gain (like 999k) and n- connected to ground.
 (defmethod conductance-element :u [{:keys [^long number-of-nodes ^long number-of-voltage-sources]}
                                    [_ ^long n+ ^long n- ^long out] _ a idx]
   ;; hack putting opamps after voltage sources.
@@ -223,11 +225,17 @@
            ~ieq (+ (- id#) (* geq# vd#))]
        ~(source-current-stamp z anode cathode ieq `(- ~ieq)))))
 
-(defmethod source-element :i [_ [_ n+ n- _ ^double i] _ z _]
-  (source-current-stamp z n+ n- (- i) i))
+(defn source-value ^double [[id n+ n- & opts]]
+  (or
+   (first (filter number? opts))
+   0.0))
 
-(defmethod source-element :v [{:keys [^long number-of-nodes]} [_ _ _ _ ^double v] _ z idx]
-  `(madd! ~z ~(+ number-of-nodes (long idx)) 0 ~v))
+(defmethod source-element :i [_ [_ n+ n- :as e] _ z _]
+  (let [i (source-value e)]
+    (source-current-stamp z n+ n- (- i) i)))
+
+(defmethod source-element :v [{:keys [^long number-of-nodes]} e _ z idx]
+  `(madd! ~z ~(+ number-of-nodes (long idx)) 0 ~(source-value e)))
 
 (defn compile-source-stamp [{:keys [^long number-of-rows netlist] :as circuit}]
   `(reify MNAStamp
@@ -257,6 +265,19 @@
    (let [a (linear-stamp conductance-stamp x)
          z (linear-stamp source-stamp x)]
      {:a a :z z :x (solve a z)})))
+
+(defn dc-analysis [circuit source start stop step]
+  (for [v (concat (range start stop step) [stop])]
+    [v (-> circuit
+           (dissoc :compiled?)
+           (update-in [:netlist :v]
+                      #(for [[id :as vs] %]
+                         (if (= id source)
+                           (assoc vs 3 v)
+                           vs)))
+           compile-circuit
+           dc-operating-point
+           :x)]))
 
 (def ^:dynamic *newton-tolerance* 1e-8)
 (def ^:dynamic *newton-iterations* 500)
@@ -298,26 +319,41 @@
 
 ;; Frontend
 
-(defn node-label [[k v]]
-  (str k (long v)))
+(defn report-node-label [[k n+ n-]]
+  (format "%s(%s)" k (s/join ","  (cond-> [(long n+)] n- (concat [(long n-)])))))
 
-(defn print-result [{:keys [^long number-of-nodes time-step netlist]} series]
-  (let [time-label "t"
-        time-format (str "%." (.scale (bigdec time-step)) "f")
+(defn report-node-voltage [[k & ns] ^long number-of-nodes x]
+  (->> (for [n ns]
+         (if n
+           (let [n (dec (long n))]
+             (mget x (case (low-key k)
+                       :v n
+                       :i (+ number-of-nodes n)) 0))
+           0.0))
+       (reduce -)))
+
+(defn report-nodes [nodes]
+  (->> nodes
+       (partition-by (re? #"(?i)[vi]"))
+       (partition 2)
+       (map (partial apply concat))))
+
+(defn print-result [{:keys [^long number-of-nodes time-step netlist]} series series-type head-label]
+  (let [transient? (= :tran series-type)
+        head-format (if transient?
+                      (str "%." (.scale (bigdec time-step)) "f")
+                      "%s")
         node-format "%.10f"]
-    (doseq [[_ _ & nodes] (:tran (sub-commands (:.print (commands netlist))))
-            :let [nodes (partition 2 nodes)]
+    (doseq [[_ _ & nodes] (-> netlist commands :.print sub-commands series-type)
+            :let [nodes (report-nodes nodes)]
             :when (seq nodes)]
       (pp/print-table
-       (concat [time-label] (map node-label nodes))
-       (for [[t x] series]
-         (apply merge {time-label (format time-format (double t))}
-                (for [[k ^double v :as node] nodes]
-                  {(node-label node)
-                   (format node-format
-                           (mget x (case k
-                                     "V" (dec v)
-                                     "I" (+ number-of-nodes v)) 0))})))))))
+       (concat [head-label] (map report-node-label nodes))
+       (for [[h x] series]
+         (apply merge {head-label (format head-format h)}
+                (for [node nodes]
+                  {(report-node-label node)
+                   (format node-format (report-node-voltage node number-of-nodes x))})))))))
 
 (defn xy-series
   ([title x y]
@@ -354,38 +390,40 @@
     .pack
     (.setVisible true)))
 
-(defn plot-result [{:keys [^long number-of-nodes netlist]} series]
-  (let [ts (map first series)
-        xs (map second series)]
-    (doseq [[_ _ & nodes] (:tran (sub-commands (:.plot (commands netlist))))
-            :let [nodes (partition 2 nodes)]
+(defn plot-result [{:keys [^long number-of-nodes netlist]} series series-type head-label]
+  (let [xs (map first series)
+        ys (map second series)]
+    (doseq [[_ _ & nodes] (-> netlist commands :.plot sub-commands series-type)
+            :let [nodes (report-nodes nodes)]
             :when (seq nodes)]
-      (apply plot
-             "t" "V"
-             (for [[k ^double v :as node] nodes]
-               (xy-series (node-label node)
-                          ts
-                          (map #(mget % (case k
-                                          "V" (dec v)
-                                          "I" (+ number-of-nodes v)) 0) xs) ))))))
+      (apply plot head-label "V"
+             (for [node nodes]
+               (xy-series (report-node-label node)
+                          xs
+                          (map #(report-node-voltage node number-of-nodes %) ys)))))))
 
 (defn batch [{:keys [title netlist] :as circuit}]
   (let [circuit (compile-circuit circuit)]
     (println title)
     (pp/print-table [(circuit-info circuit)])
-    (println "DC Operating Point Analysis")
-    (let [{:keys [a z x] :as dc-result} (time (dc-operating-point circuit))]
+    (let [{:keys [a z x] :as dc-result} (do (println "DC Operating Point Analysis")
+                                            (time (dc-operating-point circuit)))]
       (println "A")
       (println a)
       (println "z")
       (println z)
       (println "x")
       (println x)
+      (doseq [[_ source start stop step] (:.dc (commands netlist))
+              :let [sweep (do (println  "DC Analysis")
+                              (time (doall (dc-analysis circuit source start stop step))))]]
+        (print-result circuit sweep :dc source)
+        (plot-result circuit sweep :dc source))
       (doseq [[_ time-step simulation-time] (:.tran (commands netlist))
               :let [series (do (println "Transient Analysis" time-step simulation-time)
                                (time (doall (transient-analysis circuit time-step simulation-time dc-result))))]]
-        (print-result circuit series)
-        (plot-result circuit series)))))
+        (print-result circuit series :tran "t")
+        (plot-result circuit series :tran "t")))))
 
 (def ^:dynamic *spice-command* "ngspice")
 
