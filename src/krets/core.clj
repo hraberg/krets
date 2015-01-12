@@ -132,7 +132,7 @@
            (map (juxt keyword #((ns-resolve 'krets.core %) circuit)))
            (apply merge {:netlist netlist :title title})))))
 
-;; MNA
+;; MNA Compiler
 
 (defn voltage-diff [x n+ n-]
   (let [term (fn [^long n]
@@ -189,8 +189,8 @@
 
 (defmethod source-element :c [{:keys [^double time-step]} [_ n+ n- ^double c] x z _]
   (let [ieq (gensym '[ieq])
-        g (/ c time-step)]
-    `(let [~ieq (* ~g ~(voltage-diff x n+ n-))]
+        geq (/ c time-step)]
+    `(let [~ieq (* ~geq ~(voltage-diff x n+ n-))]
        ~(source-current-stamp z n+ n- ieq `(- ~ieq)))))
 
 (defmethod source-element :d [{:keys [models]} [_ anode cathode model] x z _]
@@ -236,6 +236,8 @@
                            {t (eval (compiler circuit t))}))})
          (apply merge)
          (vary-meta circuit merge))))
+
+;; MNA Analysis
 
 (defn dc-operating-point
   ([circuit]
