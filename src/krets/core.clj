@@ -204,10 +204,10 @@
            ~ieq (+ (- id#) (* geq# vd#))]
        ~(source-current-stamp z anode cathode ieq `(- ~ieq)))))
 
-(defmethod source-element :i [_ [_ n+ n- _ ^double i] x z _]
+(defmethod source-element :i [_ [_ n+ n- _ ^double i] _ z _]
   (source-current-stamp z n+ n- (- i) i))
 
-(defmethod source-element :v [{:keys [^long number-of-nodes]} [_ _ _ _ ^double v] x z idx]
+(defmethod source-element :v [{:keys [^long number-of-nodes]} [_ _ _ _ ^double v] _ z idx]
   `(madd! ~z ~(+ number-of-nodes (long idx)) 0 ~v))
 
 (defn compile-source-stamp [{:keys [^long number-of-rows netlist] :as circuit}]
