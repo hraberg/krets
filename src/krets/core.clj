@@ -136,10 +136,11 @@
 
 (defn voltage-diff [x n+ n-]
   (let [term (fn [^long n]
-               (if (ground? n)
-                 0.0
-                 `(mget ~x ~(dec n) 0)))]
-    `(- ~(term n+) ~(term n-))))
+               `(mget ~x ~(dec n) 0))]
+    (cond
+     (ground? n+) (term n-)
+     (ground? n-) (term n+)
+     :else `(- ~(term n+) ~(term n-)))))
 
 (defn conductance-stamp [a n+ n- g]
   (for [^long row [n+ n-]
@@ -151,10 +152,10 @@
 (defmulti conductance-element (fn [opts e x a] (element-type e)))
 
 (defmethod conductance-element :r [_ [_ _ _ ^double r] _ _]
-  `(/ 1.0 ~r))
+  (/ 1.0 r))
 
 (defmethod conductance-element :c [{:keys [^double time-step]} [_ _ _ ^double c] _ _]
-  `(/ ~c ~time-step))
+  (/ c time-step))
 
 (defmethod conductance-element :d [{:keys [models]} [_ anode cathode model] x _]
   (let [vt 0.025875
@@ -179,56 +180,50 @@
                 ~@(conductance-stamp a n+ n- g)))
          ~a))))
 
-(defmulti source-element (fn [opts e x z] (element-type e)))
+(defn source-current-stamp [z n+ n- in out]
+  `(do ~@(for [[^long row i] [[n+ in] [n- out]]
+               :when (not (ground? row))]
+           `(madd! ~z ~(dec row) 0 ~i))))
 
-(defmethod source-element :c [{:keys [^double time-step]} [_ n+ n- ^double c] x z]
-  (let [g (/ c time-step)]
-    ;; TODO: why do we need the reverse order here?
-    ;;       this used to be in the reverse in the actual netlist, but think that was wrong.
-    ;;       this is how it's setup in https://xyce.sandia.gov/downloads/_assets/documents/Xyce_Math_Formulation.pdf page 30.
-    `(* ~g ~(voltage-diff x n- n+))))
+(defmulti source-element (fn [opts e x z idx] (element-type e)))
 
-(defmethod source-element :d [{:keys [models]} [_ anode cathode model] x z]
-  (let [vt 0.025875
+(defmethod source-element :c [{:keys [^double time-step]} [_ n+ n- ^double c] x z _]
+  (let [ieq (gensym '[ieq])
+        g (/ c time-step)]
+    `(let [~ieq (* ~g ~(voltage-diff x n+ n-))]
+       ~(source-current-stamp z n+ n- ieq `(- ~ieq)))))
+
+(defmethod source-element :d [{:keys [models]} [_ anode cathode model] x z _]
+  (let [ieq (gensym 'ieq)
+        vt 0.025875
         is (-> model models :is double)
         is-by-vt (/ is vt)]
     `(let [vd# ~(voltage-diff x anode cathode)
            exp-vd-by-vt# (Math/exp (/ vd# ~vt))
            geq# (* ~is-by-vt exp-vd-by-vt#)
-           id# (* ~is (- exp-vd-by-vt# 1.0))]
-      ;; TODO: should the other row be (+ (- id) (* geq vd)) - that is, they are in different directions?
-      ;;       ie. more generic, simply reverse the terms, (- (* geq vd) id)
-      ;;       so, we cannot call this fn just once, alternatively, we need to stamp in here.
-      ;;       could this be related to the above problem as well?
-      (- id# (* geq# vd#)))))
+           id# (* ~is (- exp-vd-by-vt# 1.0))
+           ~ieq (+ (- id#) (* geq# vd#))]
+       ~(source-current-stamp z anode cathode ieq `(- ~ieq)))))
 
-(defmethod source-element :i [_ [_ _ _ _ ^double i] x z]
-  `~i)
+(defmethod source-element :i [_ [_ n+ n- _ ^double i] x z _]
+  `~(source-current-stamp z n+ n- (- i) i))
 
-(defmethod source-element :v [_ [_ _ _ _ ^double v] x z]
-  `~v)
+(defmethod source-element :v [{:keys [^long number-of-nodes]} [_ _ _ _ ^double v] x z idx]
+  `(madd! ~z ~(+ number-of-nodes (long idx)) 0 ~v))
 
 (defn compiled-source-stamp [circuit linearity]
   (let [{:keys [^long number-of-rows ^long number-of-nodes]} (meta circuit)
-        [z x i-or-v] (map gensym '[z x i-or-v])
+        [z x] (map gensym '[z x])
         opts (meta circuit)
         ts (case linearity
              :linear [:v :i]
              :transient [:c]
-             :non-linear non-linear-elements)
-        es (vec (mapcat circuit ts))]
+             :non-linear non-linear-elements)]
     `(fn [~x]
        (let [~z (zero-matrix ~number-of-rows 1)]
          ~@(for [t ts
                  [^long idx [id n+ n- :as e]] (map-indexed vector (t circuit))]
-             `(let [~i-or-v ~(source-element opts e x z)]
-                ~@(for [[^long row sign] [[n+ `-] [n- `+]]
-                        :when (not (ground? row))
-                        :let [row (case t
-                                    (:i, :c, :d) (dec row)
-                                    :v (+ idx number-of-nodes))]]
-                    ;; TODO: replace this with proper stamping in the element fns.
-                    `(madd! ~z ~row 0 (~sign ~i-or-v)))))
+             (source-element opts e x z idx))
         ~z))))
 
 (defn compile-circuit [circuit]
@@ -266,7 +261,7 @@
       (let [z (add! (transient-source-stamp x) z)]
         (loop [xn-1 x iters newton-iterations]
           (if (zero? iters)
-            (assert xn-1 "Didn't converge.")
+            (throw (ex-info "Didn't converge." {:x xn-1}))
             (let [xn (solve (add! (non-linear-conductance-stamp xn-1) a)
                             (add! (non-linear-source-stamp xn-1) z))]
               (if (equals xn xn-1 newton-tolerance)
