@@ -71,11 +71,11 @@
 
 (def ground? zero?)
 
-(defn number-of-voltage-sources [circuit]
-  (count (:v circuit)))
+(defn number-of-voltage-sources [netlist]
+  (count (:v netlist)))
 
-(defn number-of-nodes [circuit]
-  (->> (dissoc circuit :.)
+(defn number-of-nodes [netlist]
+  (->> (dissoc netlist :.)
        vals
        (apply concat)
        (mapcat #(map % [1 2]))
@@ -83,18 +83,18 @@
        set
        count))
 
-(defn number-of-rows [circuit]
-  (+ (long (number-of-voltage-sources circuit))
-     (long (number-of-nodes circuit))))
+(defn number-of-rows [netlist]
+  (+ (long (number-of-voltage-sources netlist))
+     (long (number-of-nodes netlist))))
 
-(defn commands [circuit]
-  (group-by (comp low-key first) (:. circuit)))
+(defn commands [netlist]
+  (group-by (comp low-key first) (:. netlist)))
 
 (defn sub-commands [m]
   (group-by (comp low-key second) m))
 
-(defn models [circuit]
-  (->> (for [[_ n t & kvs] (:.model (commands circuit))]
+(defn models [netlist]
+  (->> (for [[_ n t & kvs] (:.model (commands netlist))]
          {n (with-meta
               (->> (for [[k v] (partition 2 kvs)]
                      [(low-key k) v])
@@ -102,35 +102,34 @@
               {:element-type (low-key t) :name n})})
        (apply merge)))
 
-(defn time-step [circuit]
-  (if-let [[[_ dt]] (:.tran (commands circuit))]
-    dt
+(defn time-step [netlist]
+  (if-let [[[_ time-step]] (:.tran (commands netlist))]
+    time-step
     Double/NaN))
 
 (def non-linear-elements [:d])
 
-(defn non-linear? [circuit]
-  (boolean (some circuit non-linear-elements)))
+(defn non-linear? [netlist]
+  (boolean (some netlist non-linear-elements)))
 
 (defn element-type [[[c]]]
   (low-key c))
 
-(defn options [circuit]
-  (dissoc (meta circuit) :netlist :title :compiled? :compiled-conductance-stamp :compiled-source-stamp))
+(defn circuit-info [circuit]
+  (dissoc circuit :netlist :title :compiled? :compiled-conductance-stamp :compiled-source-stamp))
 
-(defn parse-netlist [netlist]
-  (let [[title & lines] (-> netlist
+(defn parse-netlist [netlist-source]
+  (let [[title & lines] (-> netlist-source
                             (s/replace #"\n\+" "")
                             s/split-lines)
-        circuit (->> lines
-                     (remove (some-fn (re? #"^\*") (re? #"(?i)^.end$")))
-                     (map #(s/split % #"[\s=,()]+"))
-                     (w/postwalk (some-fn spice-number identity))
-                     (group-by element-type))]
-    (with-meta circuit
-      (->> '[number-of-nodes number-of-voltage-sources number-of-rows time-step models non-linear?]
-           (map (juxt keyword #((ns-resolve 'krets.core %) circuit)))
-           (apply merge {:netlist netlist :title title})))))
+        parsed-netlist (->> lines
+                            (remove (some-fn (re? #"^\*") (re? #"(?i)^.end$")))
+                            (map #(s/split % #"[\s=,()]+"))
+                            (w/postwalk (some-fn spice-number identity))
+                            (group-by element-type))]
+    (apply merge (with-meta {:netlist parsed-netlist :title title} {:netlist-source netlist-source})
+           (for [k '[number-of-nodes number-of-voltage-sources number-of-rows time-step models non-linear?]]
+             {(keyword k) ((ns-resolve 'krets.core k) parsed-netlist)}))))
 
 ;; MNA Compiler
 
@@ -149,7 +148,7 @@
         :let [row (dec row) col (dec col)]]
     `(madd! ~a ~row ~col ~(if (= row col) `~g `(- ~g)))))
 
-(defmulti conductance-element (fn [opts e x a] (element-type e)))
+(defmulti conductance-element (fn [circuit e x a] (element-type e)))
 
 (defmethod conductance-element :r [_ [_ _ _ ^double r] _ _]
   (/ 1.0 r))
@@ -165,18 +164,17 @@
        (* ~is-by-vt (Math/exp (/ vd# ~vt))))))
 
 ;; This fn doesn't stamp the voltage sources in their rows outside the conductance sub matrix.
-(defn compiled-conductance-stamp [circuit linearity]
+(defn compiled-conductance-stamp [{:keys [^long number-of-rows netlist] :as circuit} linearity]
   (let [[a x g] (map gensym '[a x g])
-        {:keys [^long number-of-rows] :as opts} (meta circuit)
         ts (case linearity
              :linear [:r :c]
              :transient []
              :non-linear non-linear-elements)
-        es (vec (mapcat circuit ts))]
+        es (vec (mapcat netlist ts))]
     `(fn [~x]
        (let [~a (zero-matrix ~number-of-rows ~number-of-rows)]
          ~@(for [[id n+ n- :as e] es]
-             `(let [~g ~(conductance-element opts e x a)]
+             `(let [~g ~(conductance-element circuit e x a)]
                 ~@(conductance-stamp a n+ n- g)))
          ~a))))
 
@@ -185,7 +183,7 @@
                :when (not (ground? row))]
            `(madd! ~z ~(dec row) 0 ~i))))
 
-(defmulti source-element (fn [opts e x z idx] (element-type e)))
+(defmulti source-element (fn [circuit e x z idx] (element-type e)))
 
 (defmethod source-element :c [{:keys [^double time-step]} [_ n+ n- ^double c] x z _]
   (let [ieq (gensym '[ieq])
@@ -211,9 +209,8 @@
 (defmethod source-element :v [{:keys [^long number-of-nodes]} [_ _ _ _ ^double v] x z idx]
   `(madd! ~z ~(+ number-of-nodes (long idx)) 0 ~v))
 
-(defn compiled-source-stamp [circuit linearity]
-  (let [{:keys [^long number-of-rows] :as opts} (meta circuit)
-        [z x] (map gensym '[z x])
+(defn compiled-source-stamp [{:keys [^long number-of-rows netlist] :as circuit} linearity]
+  (let [[z x] (map gensym '[z x])
         ts (case linearity
              :linear [:v :i]
              :transient [:c]
@@ -221,12 +218,12 @@
     `(fn [~x]
        (let [~z (zero-matrix ~number-of-rows 1)]
          ~@(for [t ts
-                 [^long idx [id n+ n- :as e]] (map-indexed vector (t circuit))]
-             (source-element opts e x z idx))
+                 [^long idx [id n+ n- :as e]] (map-indexed vector (t netlist))]
+             (source-element circuit e x z idx))
         ~z))))
 
 (defn compile-circuit [circuit]
-  (if (-> circuit meta :compiled?)
+  (if (:compiled? circuit)
     circuit
     (->> (for [s '[compiled-source-stamp compiled-conductance-stamp]
                :let [compiler (ns-resolve 'krets.core s)]]
@@ -234,26 +231,23 @@
             (keyword s)
             (apply merge (for [t [:linear :transient :non-linear]]
                            {t (eval (compiler circuit t))}))})
-         (apply merge)
-         (vary-meta circuit merge))))
+         (apply merge circuit))))
 
 ;; MNA Analysis
 
 (defn dc-operating-point
-  ([circuit]
-   (dc-operating-point circuit (zero-matrix (-> circuit meta :number-of-rows) 1)))
-  ([circuit x]
-   (let [{:keys [compiled-source-stamp compiled-conductance-stamp]} (meta circuit)
-         a ((compiled-conductance-stamp :linear) x)
+  ([{:keys [^long number-of-rows] :as circuit}]
+   (dc-operating-point circuit (zero-matrix number-of-rows 1)))
+  ([{:keys [compiled-source-stamp compiled-conductance-stamp]} x]
+   (let [a ((compiled-conductance-stamp :linear) x)
          z ((compiled-source-stamp :linear) x)]
      {:a a :z z :x (solve a z)})))
 
 (def ^:dynamic *newton-tolerance* 1e-8)
 (def ^:dynamic *newton-iterations* 500)
 
-(defn non-linear-step-fn [circuit a z]
-  (let [{:keys [compiled-source-stamp compiled-conductance-stamp]} (meta circuit)
-        transient-source-stamp (compiled-source-stamp :transient)
+(defn non-linear-step-fn [{:keys [compiled-source-stamp compiled-conductance-stamp]} a z]
+  (let [transient-source-stamp (compiled-source-stamp :transient)
         non-linear-conductance-stamp (compiled-conductance-stamp :non-linear)
         non-linear-source-stamp (compiled-source-stamp :non-linear)
         newton-tolerance (double *newton-tolerance*)
@@ -269,14 +263,13 @@
                 xn
                 (recur xn (dec iters))))))))))
 
-(defn linear-step-fn [circuit a z]
-  (let [{:keys [compiled-source-stamp]} (meta circuit)
-        transient-source-stamp (compiled-source-stamp :transient)]
+(defn linear-step-fn [{:keys [compiled-source-stamp]} a z]
+  (let [transient-source-stamp (compiled-source-stamp :transient)]
     (fn [x]
       (solve a (add! (transient-source-stamp x) z)))))
 
-(defn transient-step-fn [circuit a z]
-  (let [step-fn (if (-> circuit meta :non-linear?)
+(defn transient-step-fn [{:keys [non-linear?] :as circuit} a z]
+  (let [step-fn (if non-linear?
                   non-linear-step-fn
                   linear-step-fn)]
     (step-fn circuit a z)))
@@ -297,13 +290,11 @@
 (defn node-label [[k v]]
   (str k (long v)))
 
-(defn print-result [circuit series]
-  (let [n (-> circuit meta :number-of-nodes double)
-        time-label "t"
-        dt (time-step circuit)
-        time-format (str "%." (.scale (bigdec dt)) "f")
+(defn print-result [{:keys [^long number-of-nodes time-step netlist]} series]
+  (let [time-label "t"
+        time-format (str "%." (.scale (bigdec time-step)) "f")
         node-format "%.10f"]
-    (doseq [[_ _ & nodes] (:tran (sub-commands (:.print (commands circuit))))
+    (doseq [[_ _ & nodes] (:tran (sub-commands (:.print (commands netlist))))
             :let [nodes (partition 2 nodes)]
             :when (seq nodes)]
       (pp/print-table
@@ -315,7 +306,7 @@
                    (format node-format
                            (mget x (case k
                                      "V" (dec v)
-                                     "I" (+ n v)) 0))})))))))
+                                     "I" (+ number-of-nodes v)) 0))})))))))
 
 (defn xy-series
   ([title x y]
@@ -352,11 +343,10 @@
     .pack
     (.setVisible true)))
 
-(defn plot-result [circuit series]
-  (let [n (-> circuit meta :number-of-nodes double)
-        ts (map first series)
+(defn plot-result [{:keys [^long number-of-nodes netlist]} series]
+  (let [ts (map first series)
         xs (map second series)]
-    (doseq [[_ _ & nodes] (:tran (sub-commands (:.plot (commands circuit))))
+    (doseq [[_ _ & nodes] (:tran (sub-commands (:.plot (commands netlist))))
             :let [nodes (partition 2 nodes)]
             :when (seq nodes)]
       (apply plot
@@ -366,12 +356,12 @@
                           ts
                           (map #(mget % (case k
                                           "V" (dec v)
-                                          "I" (+ n v)) 0) xs) ))))))
+                                          "I" (+ number-of-nodes v)) 0) xs) ))))))
 
-(defn batch [circuit]
+(defn batch [{:keys [title netlist] :as circuit}]
   (let [circuit (compile-circuit circuit)]
-    (println (-> circuit meta :title))
-    (pp/print-table [(options circuit)])
+    (println title)
+    (pp/print-table [(circuit-info circuit)])
     (println "DC Operating Point Analysis")
     (let [{:keys [a z x] :as dc-result} (time (dc-operating-point circuit))]
       (println "A")
@@ -380,9 +370,9 @@
       (println z)
       (println "x")
       (println x)
-      (doseq [[_ dt simulation-time] (:.tran (commands circuit))
-              :let [series (do (println "Transient Analysis" dt simulation-time)
-                               (time (doall (transient-analysis circuit dt simulation-time dc-result))))]]
+      (doseq [[_ time-step simulation-time] (:.tran (commands netlist))
+              :let [series (do (println "Transient Analysis" time-step simulation-time)
+                               (time (doall (transient-analysis circuit time-step simulation-time dc-result))))]]
         (print-result circuit series)
         (plot-result circuit series)))))
 
