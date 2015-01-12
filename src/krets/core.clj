@@ -217,7 +217,7 @@
          `(~f [_# ~x]
            (let [~z (zero-matrix ~number-of-rows 1)]
              ~@(for [t ts
-                     [idx [_ n+ n- :as e]] (map-indexed vector (t netlist))]
+                     [idx e] (map-indexed vector (t netlist))]
                  (source-element circuit e x z idx))
              ~z)))))
 
