@@ -72,7 +72,7 @@
 (def ground? zero?)
 
 (defn number-of-voltage-sources [netlist]
-  (count (:v netlist)))
+  (count (mapcat #{:v :u} netlist)))
 
 (defn number-of-nodes [netlist]
   (->> (dissoc netlist :.)
@@ -145,38 +145,57 @@
      :else `(- ~(term n+) ~(term n-)))))
 
 (defn conductance-stamp [a n+ n- g]
-  `(do ~@(for [^long row [n+ n-]
+  (let [gs (gensym 'g)]
+    `(let [~gs ~g]
+       ~@(for [^long row [n+ n-]
                ^long col [n+ n-]
                :when (not (or (ground? row) (ground? col)))
-              :let [row (dec row) col (dec col)]]
-           `(madd! ~a ~row ~col ~(if (= row col) `~g `(- ~g))))))
+               :let [row (dec row) col (dec col)]]
+           `(madd! ~a ~row ~col ~(if (= row col) `~gs `(- ~gs)))))))
 
-(defmulti conductance-element (fn [circuit e x a] (element-type e)))
+(defmulti conductance-element (fn [circuit e x a idx] (element-type e)))
 
-(defmethod conductance-element :r [_ [_ _ _ ^double r] _ _]
-  (/ 1.0 r))
+(defmethod conductance-element :r [_ [_ n+ n- ^double r] _ a _]
+  (conductance-stamp a n+ n- (/ 1.0 r)))
 
-(defmethod conductance-element :c [{:keys [^double time-step]} [_ _ _ ^double c] _ _]
-  (/ c time-step))
+(defmethod conductance-element :c [{:keys [^double time-step]} [_ n+ n- ^double c] _ a _]
+  (conductance-stamp a n+ n- (/ c time-step)))
 
-(defmethod conductance-element :d [{:keys [models]} [_ anode cathode model] x _]
+(defmethod conductance-element :d [{:keys [models]} [_ anode cathode model] x a _]
   (let [vt 0.025875
         is (-> model models :is double)
         is-by-vt (/ is vt)]
-    `(let [vd# ~(voltage-diff x anode cathode)]
-       (* ~is-by-vt (Math/exp (/ vd# ~vt))))))
+    (conductance-stamp a anode cathode
+     `(let [vd# ~(voltage-diff x anode cathode)]
+        (* ~is-by-vt (Math/exp (/ vd# ~vt)))))))
 
-;; This fn doesn't stamp the voltage sources in their rows outside the conductance sub matrix.
+(defmethod conductance-element :v [{:keys [^long number-of-nodes]} [_ n+ n-] _ a idx]
+  `(do ~@(for [[^long n v] [[n+ 1] [n- -1]]
+               :when (not (ground? n))
+               :let [n (dec n)
+                     idx (+ (long idx) number-of-nodes)]]
+           `(do (madd! ~a ~n ~idx ~v)
+                (madd! ~a ~idx ~n ~v)))))
+
+;; ideal op amp, this is only the linear version.
+;; "The operational amplifier could be considered as a special case of a voltage controlled current source with infinite forward transconductance G." - QUCS technical.pdf p 117
+(defmethod conductance-element :u [{:keys [^long number-of-nodes ^long number-of-voltage-sources]}
+                                   [_ ^long n+ ^long n- ^long out] _ a idx]
+  ;; hack putting opamps after voltage sources.
+  (let [idx (- (dec (+ number-of-nodes number-of-voltage-sources)) (long idx))]
+    `(do ~@(for [[n+ n- v] [[idx (dec n+) 1] [idx (dec n-) -1] [(dec out) idx 1]]
+                 :when (not (or (ground? n+) (ground? n-)))]
+             `(madd! ~a ~n+ ~n- ~v)))))
+
 (defn compile-conductance-stamp [{:keys [^long number-of-rows netlist] :as circuit}]
   `(reify MNAStamp
-     ~@(for [[f ts] '{linear-stamp [:r :c] transient-stamp [] non-linear-stamp [:d]}
-             :let [[a x g] (map gensym '[a x g])
-                   es (vec (mapcat netlist ts))]]
+     ~@(for [[f ts] '{linear-stamp [:r :c :v :u] transient-stamp [] non-linear-stamp [:d]}
+             :let [[a x g] (map gensym '[a x g])]]
          `(~f [_# ~x]
            (let [~a (zero-matrix ~number-of-rows ~number-of-rows)]
-             ~@(for [[_ n+ n- :as e] es]
-                 `(let [~g ~(conductance-element circuit e x a)]
-                    ~(conductance-stamp a n+ n- g)))
+             ~@(for [t ts
+                     [idx e] (map-indexed vector (t netlist))]
+                 (conductance-element circuit e x a idx))
              ~a)))))
 
 (defn source-current-stamp [z n+ n- in out]
