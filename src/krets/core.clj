@@ -138,7 +138,7 @@
   (let [term (fn [^long n]
                `(mget ~x ~(dec n) 0))]
     (cond
-     (ground? n+) (term n-)
+     (ground? n+) `(- ~(term n-))
      (ground? n-) (term n+)
      :else `(- ~(term n+) ~(term n-)))))
 
