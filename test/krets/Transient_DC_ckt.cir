@@ -9,7 +9,7 @@ R3      2       0       100K
 C1      2       0       10u
 *
 * ANALYSIS
-.TRAN   0.0005 0.200
+.TRAN   0.0005 0.200 UIC
 * VIEW RESULTS
 .PLOT  TRAN    V(1) V(2)
 * .PRINT  TRAN    V(1) V(2)
