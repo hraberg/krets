@@ -212,9 +212,8 @@
   `(madd! ~z ~(+ number-of-nodes (long idx)) 0 ~v))
 
 (defn compiled-source-stamp [circuit linearity]
-  (let [{:keys [^long number-of-rows ^long number-of-nodes]} (meta circuit)
+  (let [{:keys [^long number-of-rows] :as opts} (meta circuit)
         [z x] (map gensym '[z x])
-        opts (meta circuit)
         ts (case linearity
              :linear [:v :i]
              :transient [:c]
