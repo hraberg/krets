@@ -187,7 +187,7 @@
 (defmulti source-element (fn [circuit e x z idx] (element-type e)))
 
 (defmethod source-element :c [{:keys [^double time-step]} [_ n+ n- ^double c] x z _]
-  (let [ieq (gensym '[ieq])
+  (let [ieq (gensym 'ieq)
         geq (/ c time-step)]
     `(let [~ieq (* ~geq ~(voltage-diff x n+ n-))]
        ~(source-current-stamp z n+ n- ieq `(- ~ieq)))))
