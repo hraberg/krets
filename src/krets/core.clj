@@ -226,16 +226,19 @@
        ~(source-current-stamp z anode cathode ieq `(- ~ieq)))))
 
 (defn source-value ^double [[id n+ n- & opts]]
-  (or
-   (first (filter number? opts))
-   0.0))
+  (or (first (filter number? opts)) 0.0))
 
 (defmethod source-element :i [_ [_ n+ n- :as e] _ z _]
   (let [i (source-value e)]
     (source-current-stamp z n+ n- (- i) i)))
 
-(defmethod source-element :v [{:keys [^long number-of-nodes]} e _ z idx]
-  `(madd! ~z ~(+ number-of-nodes (long idx)) 0 ~(source-value e)))
+(def ^:dynamic *voltage-sources* nil)
+
+(defmethod source-element :v [{:keys [^long number-of-nodes]} [id :as e] _ z idx]
+  (let [v (source-value e)]
+    `(madd! ~z ~(+ number-of-nodes (long idx)) 0 ~(if *voltage-sources*
+                                                   `(*voltage-sources* ~id ~v)
+                                                   v))))
 
 (defn compile-source-stamp [{:keys [^long number-of-rows netlist] :as circuit}]
   `(reify MNAStamp
@@ -268,16 +271,8 @@
 
 (defn dc-analysis [circuit source start stop step]
   (for [v (concat (range start stop step) [stop])]
-    [v (-> circuit
-           (dissoc :compiled?)
-           (update-in [:netlist :v]
-                      #(for [[id :as vs] %]
-                         (if (= id source)
-                           (assoc vs 3 v)
-                           vs)))
-           compile-circuit
-           dc-operating-point
-           :x)]))
+    (binding [*voltage-sources* (assoc *voltage-sources* source v)]
+      [v (-> circuit dc-operating-point :x)])))
 
 (def ^:dynamic *newton-tolerance* 1e-8)
 (def ^:dynamic *newton-iterations* 500)
