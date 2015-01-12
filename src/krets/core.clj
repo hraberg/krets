@@ -310,9 +310,10 @@
   ([circuit ^double time-step ^double simulation-time]
    (transient-analysis circuit time-step simulation-time (dc-operating-point circuit)))
   ([circuit ^double time-step ^double simulation-time {:keys [a z x]}]
-   (let [step (transient-step-fn circuit a z)]
+   (let [step (transient-step-fn circuit a z)
+         end (+ simulation-time time-step)]
      (loop [t 0.0 x x acc (transient [])]
-       (if (> t simulation-time)
+       (if (> t end)
          (persistent! acc)
          (let [x (step x)]
            (recur (+ t time-step) x (conj! acc [t x]))))))))
