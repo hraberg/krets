@@ -48,6 +48,7 @@ This is the technique used by Spice and most other simulators.
 * http://bwrcs.eecs.berkeley.edu/Classes/IcBook/SPICE/
 * http://www.linear.com/designtools/software/#LTspice
 * http://newton.ex.ac.uk/teaching/CDHW/Electronics2/userguide/
+* http://www.allaboutcircuits.com/vol_5/chpt_7/8.html
 
 #### Other MNA simulators
 
