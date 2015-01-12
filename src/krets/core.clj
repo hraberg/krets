@@ -107,16 +107,14 @@
     time-step
     Double/NaN))
 
-(def non-linear-elements [:d])
-
 (defn non-linear? [netlist]
-  (boolean (some netlist non-linear-elements)))
+  (boolean (some netlist [:d])))
 
 (defn element-type [[[c]]]
   (low-key c))
 
 (defn circuit-info [circuit]
-  (dissoc circuit :netlist :title :compiled? :compiled-conductance-stamp :compiled-source-stamp))
+  (dissoc circuit :netlist :title :compiled? :conductance-stamp :source-stamp))
 
 (defn parse-netlist [netlist-source]
   (let [[title & lines] (-> netlist-source
@@ -133,6 +131,11 @@
 
 ;; MNA Compiler
 
+(defprotocol MNAStamp
+  (linear-stamp [_ x])
+  (transient-stamp [_ x])
+  (non-linear-stamp [_ x]))
+
 (defn voltage-diff [x n+ n-]
   (let [term (fn [^long n]
                `(mget ~x ~(dec n) 0))]
@@ -142,11 +145,11 @@
      :else `(- ~(term n+) ~(term n-)))))
 
 (defn conductance-stamp [a n+ n- g]
-  (for [^long row [n+ n-]
-        ^long col [n+ n-]
-        :when (not (or (ground? row) (ground? col)))
-        :let [row (dec row) col (dec col)]]
-    `(madd! ~a ~row ~col ~(if (= row col) `~g `(- ~g)))))
+  `(do ~@(for [^long row [n+ n-]
+               ^long col [n+ n-]
+               :when (not (or (ground? row) (ground? col)))
+              :let [row (dec row) col (dec col)]]
+           `(madd! ~a ~row ~col ~(if (= row col) `~g `(- ~g))))))
 
 (defmulti conductance-element (fn [circuit e x a] (element-type e)))
 
@@ -164,19 +167,17 @@
        (* ~is-by-vt (Math/exp (/ vd# ~vt))))))
 
 ;; This fn doesn't stamp the voltage sources in their rows outside the conductance sub matrix.
-(defn compiled-conductance-stamp [{:keys [^long number-of-rows netlist] :as circuit} linearity]
-  (let [[a x g] (map gensym '[a x g])
-        ts (case linearity
-             :linear [:r :c]
-             :transient []
-             :non-linear non-linear-elements)
-        es (vec (mapcat netlist ts))]
-    `(fn [~x]
-       (let [~a (zero-matrix ~number-of-rows ~number-of-rows)]
-         ~@(for [[id n+ n- :as e] es]
-             `(let [~g ~(conductance-element circuit e x a)]
-                ~@(conductance-stamp a n+ n- g)))
-         ~a))))
+(defn compile-conductance-stamp [{:keys [^long number-of-rows netlist] :as circuit}]
+  `(reify MNAStamp
+     ~@(for [[f ts] '{linear-stamp [:r :c] transient-stamp [] non-linear-stamp [:d]}
+             :let [[a x g] (map gensym '[a x g])
+                   es (vec (mapcat netlist ts))]]
+         `(~f [_# ~x]
+           (let [~a (zero-matrix ~number-of-rows ~number-of-rows)]
+             ~@(for [[_ n+ n- :as e] es]
+                 `(let [~g ~(conductance-element circuit e x a)]
+                    ~(conductance-stamp a n+ n- g)))
+             ~a)))))
 
 (defn source-current-stamp [z n+ n- in out]
   `(do ~@(for [[^long row i] [[n+ in] [n- out]]
@@ -204,69 +205,60 @@
        ~(source-current-stamp z anode cathode ieq `(- ~ieq)))))
 
 (defmethod source-element :i [_ [_ n+ n- _ ^double i] x z _]
-  `~(source-current-stamp z n+ n- (- i) i))
+  (source-current-stamp z n+ n- (- i) i))
 
 (defmethod source-element :v [{:keys [^long number-of-nodes]} [_ _ _ _ ^double v] x z idx]
   `(madd! ~z ~(+ number-of-nodes (long idx)) 0 ~v))
 
-(defn compiled-source-stamp [{:keys [^long number-of-rows netlist] :as circuit} linearity]
-  (let [[z x] (map gensym '[z x])
-        ts (case linearity
-             :linear [:v :i]
-             :transient [:c]
-             :non-linear non-linear-elements)]
-    `(fn [~x]
-       (let [~z (zero-matrix ~number-of-rows 1)]
-         ~@(for [t ts
-                 [^long idx [id n+ n- :as e]] (map-indexed vector (t netlist))]
-             (source-element circuit e x z idx))
-        ~z))))
+(defn compile-source-stamp [{:keys [^long number-of-rows netlist] :as circuit}]
+  `(reify MNAStamp
+     ~@(for [[f ts] '{linear-stamp [:v :i] transient-stamp [:c] non-linear-stamp [:d]}
+             :let [[z x] (map gensym '[z x])]]
+         `(~f [_# ~x]
+           (let [~z (zero-matrix ~number-of-rows 1)]
+             ~@(for [t ts
+                     [idx [_ n+ n- :as e]] (map-indexed vector (t netlist))]
+                 (source-element circuit e x z idx))
+             ~z)))))
 
 (defn compile-circuit [circuit]
   (if (:compiled? circuit)
     circuit
-    (->> (for [s '[compiled-source-stamp compiled-conductance-stamp]
-               :let [compiler (ns-resolve 'krets.core s)]]
-           {:compiled? true
-            (keyword s)
-            (apply merge (for [t [:linear :transient :non-linear]]
-                           {t (eval (compiler circuit t))}))})
-         (apply merge circuit))))
+    (assoc circuit
+      :compiled? true
+      :conductance-stamp (eval (compile-conductance-stamp circuit))
+      :source-stamp (eval (compile-source-stamp circuit)))))
 
 ;; MNA Analysis
 
 (defn dc-operating-point
   ([{:keys [^long number-of-rows] :as circuit}]
    (dc-operating-point circuit (zero-matrix number-of-rows 1)))
-  ([{:keys [compiled-source-stamp compiled-conductance-stamp]} x]
-   (let [a ((compiled-conductance-stamp :linear) x)
-         z ((compiled-source-stamp :linear) x)]
+  ([{:keys [conductance-stamp source-stamp]} x]
+   (let [a (linear-stamp conductance-stamp x)
+         z (linear-stamp source-stamp x)]
      {:a a :z z :x (solve a z)})))
 
 (def ^:dynamic *newton-tolerance* 1e-8)
 (def ^:dynamic *newton-iterations* 500)
 
-(defn non-linear-step-fn [{:keys [compiled-source-stamp compiled-conductance-stamp]} a z]
-  (let [transient-source-stamp (compiled-source-stamp :transient)
-        non-linear-conductance-stamp (compiled-conductance-stamp :non-linear)
-        non-linear-source-stamp (compiled-source-stamp :non-linear)
-        newton-tolerance (double *newton-tolerance*)
+(defn non-linear-step-fn [{:keys [conductance-stamp source-stamp]} a z]
+  (let [newton-tolerance (double *newton-tolerance*)
         newton-iterations (long *newton-iterations*)]
     (fn [x]
-      (let [z (add! (transient-source-stamp x) z)]
+      (let [z (add! (transient-stamp source-stamp x) z)]
         (loop [xn-1 x iters newton-iterations]
           (if (zero? iters)
             (throw (ex-info "Didn't converge." {:x xn-1}))
-            (let [xn (solve (add! (non-linear-conductance-stamp xn-1) a)
-                            (add! (non-linear-source-stamp xn-1) z))]
+            (let [xn (solve (add! (non-linear-stamp conductance-stamp xn-1) a)
+                            (add! (non-linear-stamp source-stamp xn-1) z))]
               (if (equals xn xn-1 newton-tolerance)
                 xn
                 (recur xn (dec iters))))))))))
 
-(defn linear-step-fn [{:keys [compiled-source-stamp]} a z]
-  (let [transient-source-stamp (compiled-source-stamp :transient)]
-    (fn [x]
-      (solve a (add! (transient-source-stamp x) z)))))
+(defn linear-step-fn [{:keys [source-stamp]} a z]
+  (fn [x]
+    (solve a (add! (transient-stamp source-stamp x) z))))
 
 (defn transient-step-fn [{:keys [non-linear?] :as circuit} a z]
   (let [step-fn (if non-linear?
