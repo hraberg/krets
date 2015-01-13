@@ -1,7 +1,8 @@
 (ns krets.bench-test
   (:use [krets.core]
         [clojure.test])
-  (:require [criterium.core :as cc]))
+  (:require [criterium.core :as cc]
+            [clojure.pprint :as pp]))
 
 (defn micro-bench [f]
   (println "running" f)
@@ -9,8 +10,10 @@
         stub (constantly nil)]
     (with-redefs [plot-result stub
                   print-result stub
-                  println stub]
-      (cc/quick-bench (batch c))
+                  pp/print-table stub]
+      (cc/quick-bench
+       (binding [*out* (proxy [java.io.Writer] [] (write [c]) (flush []))]
+         (batch c)))
       (is true))))
 
 (deftest micro-bench-non-linear
