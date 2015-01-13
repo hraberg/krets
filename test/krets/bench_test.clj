@@ -6,11 +6,10 @@
 (defn micro-bench [f]
   (println "running" f)
   (with-redefs [plot-result (constantly nil)
-                print-result (constantly nil)]
+                print-result (constantly nil)
+                println (constantly nil)]
     (let [c (-> f slurp parse-netlist compile-circuit)]
-      (cc/quick-bench
-       (with-out-str
-         (batch c)))
+      (cc/quick-bench (batch c))
       (is true))))
 
 (deftest micro-bench-non-linear
