@@ -73,7 +73,7 @@
 (def ground? zero?)
 
 (defn number-of-voltage-sources [netlist]
-  (count (mapcat netlist [:v :u])))
+  (count (mapcat netlist [:v :e :u])))
 
 (defn number-of-nodes [netlist]
   (->> (dissoc netlist :.)

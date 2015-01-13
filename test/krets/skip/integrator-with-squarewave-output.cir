@@ -1,0 +1,8 @@
+Integrator with squarewave input
+vin 1 0 pulse (-1 1 0 0 0 10m 20m)
+r1 1 2 1k
+c1 2 3 150u ic=0
+e 3 0 0 2 999k
+.tran 1m 50m uic
+.plot tran v(1,0) v(3,0)
+.end

@@ -4,7 +4,7 @@
   (:require [clojure.java.io :as io]))
 
 (deftest sanity-check
-  (doseq [f (file-seq (io/file "test/krets/"))
+  (doseq [f (.listFiles (io/file "test/krets/"))
           :when (re-find #"\.cir$" (str f))]
     (with-redefs [plot (constantly nil)
                   print-result (constantly nil)]
