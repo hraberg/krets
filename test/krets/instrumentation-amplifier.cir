@@ -1,0 +1,19 @@
+Instrumentation amplifier
+v1 1 0
+rbogus1 1 0 9e12
+v2 4 0 dc 5
+rbogus2 4 0 9e12
+e1 3 0 1 2 999k
+e2 6 0 4 5 999k
+e3 9 0 8 7 999k
+rload 9 0 10k
+r1 2 3 10k
+rgain 2 5 10k
+r2 5 6 10k
+r3 3 7 10k
+r4 7 9 10k
+r5 6 8 10k
+r6 8 0 10k
+.dc v1 0 10 1
+.print dc v(9) v(3,6)
+.end
