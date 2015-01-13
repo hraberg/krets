@@ -1,9 +1,0 @@
-noninverting opamp
-v1 2 0 dc 5
-rbogus 2 0 10k
-e 3 0 2 1 999k
-r1 3 1 20k
-r2 1 0 10k
-.dc v1 5 5 1
-.print dc v(1) v(2) v(3)
-.end

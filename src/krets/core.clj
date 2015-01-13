@@ -72,10 +72,10 @@
 
 (def ground? zero?)
 
-(defn number-of-voltage-sources [netlist]
+(defn number-of-voltage-sources ^long [netlist]
   (count (mapcat netlist [:v :e :u])))
 
-(defn number-of-nodes [netlist]
+(defn number-of-nodes ^long [netlist]
   (->> (dissoc netlist :.)
        vals
        (apply concat)
@@ -85,8 +85,13 @@
        count))
 
 (defn number-of-rows [netlist]
-  (+ (long (number-of-voltage-sources netlist))
-     (long (number-of-nodes netlist))))
+  (+ (number-of-voltage-sources netlist)
+     (number-of-nodes netlist)))
+
+(defn voltage-source->index [netlist]
+  (let [number-of-nodes (number-of-nodes netlist)]
+    (into {} (for [[^long idx [id]] (map-indexed vector (mapcat netlist [:v :e :u]))]
+               [id (+ number-of-nodes idx)]))))
 
 (defn commands [netlist]
   (group-by (comp low-key first) (:. netlist)))
@@ -115,7 +120,7 @@
   (low-key c))
 
 (defn circuit-info [circuit]
-  (dissoc circuit :netlist :title :compiled? :conductance-stamp :source-stamp))
+  (dissoc circuit :netlist :title :compiled? :conductance-stamp :source-stamp :voltage-source->index))
 
 (defn parse-netlist [netlist-source]
   (let [[title & lines] (-> netlist-source
@@ -127,7 +132,7 @@
                             (w/postwalk (some-fn spice-number identity))
                             (group-by element-type))]
     (apply merge (with-meta {:netlist parsed-netlist :title title} {:netlist-source netlist-source})
-           (for [k '[number-of-nodes number-of-voltage-sources number-of-rows time-step models non-linear?]]
+           (for [k '[number-of-nodes number-of-voltage-sources number-of-rows time-step models non-linear? voltage-source->index]]
              {(keyword k) ((ns-resolve 'krets.core k) parsed-netlist)}))))
 
 ;; MNA Compiler
@@ -154,15 +159,15 @@
                :let [row (dec row) col (dec col)]]
            `(madd! ~a ~row ~col ~(if (= row col) `~gs `(- ~gs)))))))
 
-(defmulti conductance-element (fn [circuit e x a idx] (element-type e)))
+(defmulti conductance-element (fn [circuit e x a] (element-type e)))
 
-(defmethod conductance-element :r [_ [_ n+ n- ^double r] _ a _]
+(defmethod conductance-element :r [_ [_ n+ n- ^double r] _ a]
   (conductance-stamp a n+ n- (/ 1.0 r)))
 
-(defmethod conductance-element :c [{:keys [^double time-step]} [_ n+ n- ^double c] _ a _]
+(defmethod conductance-element :c [{:keys [^double time-step]} [_ n+ n- ^double c] _ a]
   (conductance-stamp a n+ n- (/ c time-step)))
 
-(defmethod conductance-element :d [{:keys [models]} [_ anode cathode model] x a _]
+(defmethod conductance-element :d [{:keys [models]} [_ anode cathode model] x a]
   (let [vt 0.025875
         is (-> model models :is double)
         is-by-vt (/ is vt)]
@@ -170,34 +175,44 @@
      `(let [vd# ~(voltage-diff x anode cathode)]
         (* ~is-by-vt (Math/exp (/ vd# ~vt)))))))
 
-(defmethod conductance-element :v [{:keys [^long number-of-nodes]} [_ n+ n-] _ a idx]
+(defn conductance-voltage-stamp [a n+ n- idx]
   `(do ~@(for [[^long n v] [[n+ 1] [n- -1]]
                :when (not (ground? n))
-               :let [n (dec n)
-                     idx (+ (long idx) number-of-nodes)]]
+               :let [n (dec n)]]
            `(do (madd! ~a ~n ~idx ~v)
                 (madd! ~a ~idx ~n ~v)))))
 
-;; ideal op amp, this is only the linear version.
-;; "The operational amplifier could be considered as a special case of a voltage controlled current source with infinite forward transconductance G." - QUCS technical.pdf p 117
-;; alternatively, an op amp can be modelled as a VCVS with high gain (like 999k) and n- connected to ground.
-(defmethod conductance-element :u [{:keys [^long number-of-nodes ^long number-of-voltage-sources]}
-                                   [_ ^long n+ ^long n- ^long out] _ a idx]
-  ;; hack putting opamps after voltage sources.
-  (let [idx (- (dec (+ number-of-nodes number-of-voltage-sources)) (long idx))]
-    `(do ~@(for [[n+ n- v] [[idx (dec n+) 1] [idx (dec n-) -1] [(dec out) idx 1]]
+(defmethod conductance-element :v [{:keys [voltage-source->index]} [id n+ n-] _ a]
+  (conductance-voltage-stamp a n+ n- (voltage-source->index id)))
+
+(defmethod conductance-element :e [{:keys [voltage-source->index]}
+                                   [id ^long out+ ^long out- ^long in+ ^long in- ^double gain] _ a]
+  (let [idx (voltage-source->index id)]
+    `(do ~(conductance-voltage-stamp a out- out+ idx)
+         ~@(for [[^long n g] [[in+ gain] [in- (- gain)]]
+                 :when (not (ground? n))]
+             `(madd! ~a ~idx ~(dec n) ~g)))))
+
+;; All About Circuits model ideal op amps as a vcvs.
+(defn u->e [[id ^long in+ ^long in- ^long out+]]
+  [(str "e" id) out+ 0 in+ in- 999e3])
+
+;; ideal op amp, this is only the linear version. QUCS technical.pdf p 117. QUCS source has a transient part.
+(defmethod conductance-element :u [{:keys [voltage-source->index]}
+                                   [id ^long in+ ^long in- ^long out+] _ a]
+  (let [idx (inc (long (voltage-source->index id)))]
+    `(do ~@(for [[^long n+ ^long n- v] [[idx in+ 1] [idx in- -1] [out+ idx 1]]
                  :when (not (or (ground? n+) (ground? n-)))]
-             `(madd! ~a ~n+ ~n- ~v)))))
+             `(madd! ~a ~(dec n+) ~(dec n-) ~v)))))
 
 (defn compile-conductance-stamp [{:keys [^long number-of-rows netlist] :as circuit}]
   `(reify MNAStamp
-     ~@(for [[f ts] '{linear-stamp [:r :c :v :u] transient-stamp [] non-linear-stamp [:d]}
+     ~@(for [[f ts] '{linear-stamp [:r :c :v :e :u] transient-stamp [] non-linear-stamp [:d]}
              :let [[a x g] (map gensym '[a x g])]]
          `(~f [_# ~x]
            (let [~a (zero-matrix ~number-of-rows ~number-of-rows)]
-             ~@(for [t ts
-                     [idx e] (map-indexed vector (t netlist))]
-                 (conductance-element circuit e x a idx))
+             ~@(for [e (mapcat netlist ts)]
+                 (conductance-element circuit e x a))
              ~a)))))
 
 (defn source-current-stamp [z n+ n- in out]
@@ -205,15 +220,15 @@
                :when (not (ground? row))]
            `(madd! ~z ~(dec row) 0 ~i))))
 
-(defmulti source-element (fn [circuit e x z idx] (element-type e)))
+(defmulti source-element (fn [circuit e x z] (element-type e)))
 
-(defmethod source-element :c [{:keys [^double time-step]} [_ n+ n- ^double c] x z _]
+(defmethod source-element :c [{:keys [^double time-step]} [_ n+ n- ^double c] x z]
   (let [ieq (gensym 'ieq)
         geq (/ c time-step)]
     `(let [~ieq (* ~geq ~(voltage-diff x n+ n-))]
        ~(source-current-stamp z n+ n- ieq `(- ~ieq)))))
 
-(defmethod source-element :d [{:keys [models]} [_ anode cathode model] x z _]
+(defmethod source-element :d [{:keys [models]} [_ anode cathode model] x z]
   (let [ieq (gensym 'ieq)
         vt 0.025875
         is (-> model models :is double)
@@ -228,17 +243,19 @@
 (defn source-value ^double [[id n+ n- & opts]]
   (or (first (filter number? opts)) 0.0))
 
-(defmethod source-element :i [_ [_ n+ n- :as e] _ z _]
+(defmethod source-element :i [_ [_ n+ n- :as e] _ z]
   (let [i (source-value e)]
     (source-current-stamp z n+ n- (- i) i)))
 
-(def ^:dynamic *voltage-sources* nil)
+(def ^:dynamic *voltage-sources* {})
 
-(defmethod source-element :v [{:keys [^long number-of-nodes]} [id :as e] _ z idx]
-  (let [v (source-value e)]
-    `(madd! ~z ~(+ number-of-nodes (long idx)) 0 ~(if *voltage-sources*
-                                                   `(*voltage-sources* ~id ~v)
-                                                   v))))
+(defmethod source-element :v [{:keys [voltage-source->index netlist]} [id :as e] _ z]
+  (let [dc-sweep? ((low-key id) (-> netlist commands :.dc sub-commands))
+        v (source-value e)
+        idx (voltage-source->index id)]
+    `(madd! ~z ~idx 0 ~(if dc-sweep?
+                         `(*voltage-sources* ~id ~v)
+                         v))))
 
 (defn compile-source-stamp [{:keys [^long number-of-rows netlist] :as circuit}]
   `(reify MNAStamp
@@ -246,9 +263,8 @@
              :let [[z x] (map gensym '[z x])]]
          `(~f [_# ~x]
            (let [~z (zero-matrix ~number-of-rows 1)]
-             ~@(for [t ts
-                     [idx e] (map-indexed vector (t netlist))]
-                 (source-element circuit e x z idx))
+             ~@(for [e (mapcat netlist ts)]
+                 (source-element circuit e x z))
              ~z)))))
 
 (defn compile-circuit [circuit]
@@ -319,13 +335,13 @@
   (format "%s(%s)" k (s/join ","  (cond-> [(long n+)] n- (concat [(long n-)])))))
 
 (defn report-node-voltage [[k & ns] ^long number-of-nodes x]
-  (->> (for [n ns]
-         (if n
-           (let [n (dec (long n))]
+  (->> (for [^long n ns]
+         (if (ground? n)
+           0.0
+           (let [n (dec n)]
              (mget x (case (low-key k)
                        :v n
-                       :i (+ number-of-nodes n)) 0))
-           0.0))
+                       :i (+ number-of-nodes n)) 0))))
        (reduce -)))
 
 (defn report-nodes [nodes]
@@ -338,7 +354,7 @@
   (let [transient? (= :tran series-type)
         head-format (if transient?
                       (str "%." (.scale (bigdec time-step)) "f")
-                      "%s")
+                      "%f")
         node-format "%.10f"]
     (doseq [[_ _ & nodes] (-> netlist commands :.print sub-commands series-type)
             :let [nodes (report-nodes nodes)]
