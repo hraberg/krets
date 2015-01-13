@@ -5,10 +5,11 @@
 
 (defn micro-bench [f]
   (println "running" f)
-  (with-redefs [plot-result (constantly nil)
-                print-result (constantly nil)
-                println (constantly nil)]
-    (let [c (-> f slurp parse-netlist compile-circuit)]
+  (let [c (-> f slurp parse-netlist compile-circuit)
+        stub (constantly nil)]
+    (with-redefs [plot-result stub
+                  print-result stub
+                  println stub]
       (cc/quick-bench (batch c))
       (is true))))
 
