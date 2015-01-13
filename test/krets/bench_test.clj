@@ -10,6 +10,7 @@
         stub (constantly nil)]
     (with-redefs [plot-result stub
                   print-result stub
+                  println stub
                   pp/print-table stub]
       (cc/quick-bench
        (binding [*out* (proxy [java.io.Writer] [] (write [c]) (flush []))]
