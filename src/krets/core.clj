@@ -123,7 +123,7 @@
   (low-key c))
 
 (defn circuit-info [circuit]
-  (dissoc circuit :netlist :title :compiled? :conductance-stamp :source-stamp :voltage-source->index))
+  (dissoc circuit :netlist :title :mna-stamp :voltage-source->index))
 
 (defn parse-netlist [netlist-source]
   (let [[title & lines] (-> netlist-source
@@ -141,20 +141,9 @@
 ;; MNA Compiler
 
 (defprotocol MNAStamp
-  (linear-stamp [_ x])
-  (transient-stamp [_ x])
-  (non-linear-stamp [_ x]))
-
-(defn mna-stamp [{:keys [netlist] :as circuit} rows cols stamp-fn]
-  `(reify MNAStamp
-     ~@(for [f (-> MNAStamp :method-map keys)
-             :let [[s x] (map gensym '[stamp x])
-                   k (low-key (s/replace (name f) "-stamp" ""))]]
-         `(~(symbol (name f)) [_# ~x]
-           (let [~s (zero-matrix ~rows ~cols)]
-             ~@(for [e (elements netlist)]
-                 (stamp-fn circuit k e x s))
-             ~s)))))
+  (linear-stamp! [_ a z x])
+  (transient-stamp! [_ z x])
+  (non-linear-stamp! [_ a z x]))
 
 (defn voltage-diff [x n+ n-]
   (let [term (fn [^long n]
@@ -173,24 +162,6 @@
                :let [row (dec row) col (dec col)]]
            `(madd! ~a ~row ~col ~(if (= row col) `~gs `(- ~gs)))))))
 
-(defmulti conductance-element (fn [circuit stamp e x a] [(element-type e) stamp]))
-
-(defmethod conductance-element :default [_ _ _ _ _])
-
-(defmethod conductance-element [:r :linear] [_ _ [_ n+ n- ^double r] _ a]
-  (conductance-stamp a n+ n- (/ 1.0 r)))
-
-(defmethod conductance-element [:c :linear] [{:keys [^double time-step]} _ [_ n+ n- ^double c] _ a]
-  (conductance-stamp a n+ n- (/ c time-step)))
-
-(defmethod conductance-element [:d :non-linear] [{:keys [models]} _ [_ anode cathode model] x a]
-  (let [vt 0.025875
-        is (-> model models :is double)
-        is-by-vt (/ is vt)]
-    (conductance-stamp a anode cathode
-     `(let [vd# ~(voltage-diff x anode cathode)]
-        (* ~is-by-vt (Math/exp (/ vd# ~vt)))))))
-
 (defn conductance-voltage-stamp [a n+ n- idx]
   `(do ~@(for [[^long n v] [[n+ 1] [n- -1]]
                :when (not (ground? n))
@@ -198,89 +169,106 @@
            `(do (madd! ~a ~n ~idx ~v)
                 (madd! ~a ~idx ~n ~v)))))
 
-(defmethod conductance-element [:v :linear] [{:keys [voltage-source->index]} _ [id n+ n-] _ a]
-  (conductance-voltage-stamp a n+ n- (voltage-source->index id)))
-
-(defmethod conductance-element [:e :linear] [{:keys [voltage-source->index]} _
-                                             [id ^long out+ ^long out- ^long in+ ^long in- ^double gain] _ a]
-  (let [idx (voltage-source->index id)]
-    `(do ~(conductance-voltage-stamp a out- out+ idx)
-         ~@(for [[^long n g] [[in+ gain] [in- (- gain)]]
-                 :when (not (ground? n))]
-             `(madd! ~a ~idx ~(dec n) ~g)))))
-
-;; All About Circuits model ideal op amps as a vcvs.
-(defn u->e [[id ^long in+ ^long in- ^long out+]]
-  [(str "e" id) out+ 0 in+ in- 999e3])
-
-;; ideal op amp, this is only the linear version. QUCS technical.pdf p 117. QUCS source has a transient part.
-(defmethod conductance-element [:u :linear] [{:keys [voltage-source->index]} _
-                                             [id ^long in+ ^long in- ^long out+] _ a]
-  (let [idx (inc (long (voltage-source->index id)))]
-    `(do ~@(for [[^long n+ ^long n- v] [[idx in+ 1] [idx in- -1] [out+ idx 1]]
-                 :when (not (or (ground? n+) (ground? n-)))]
-             `(madd! ~a ~(dec n+) ~(dec n-) ~v)))))
+(defn source-value ^double [[id n+ n- & opts]]
+  (or (first (filter number? opts)) 0.0))
 
 (defn source-current-stamp [z n+ n- in out]
   `(do ~@(for [[^long row i] [[n+ in] [n- out]]
                :when (not (ground? row))]
            `(madd! ~z ~(dec row) 0 ~i))))
 
-(defmulti source-element (fn [circuit stamp e x z] [(element-type e) stamp]))
+(defmulti stamp-element (fn [circuit {:keys [stamp] :as env} e] [(element-type e) stamp]))
 
-(defmethod source-element :default [_ _ _ _ _])
+(defmethod stamp-element :default [_ _ _])
 
-(defmethod source-element [:c :transient] [{:keys [^double time-step]} _ [_ n+ n- ^double c] x z]
+(defmethod stamp-element [:r :linear] [_ {:keys [a]} [_ n+ n- ^double r]]
+  (conductance-stamp a n+ n- (/ 1.0 r)))
+
+(defmethod stamp-element [:c :linear] [{:keys [^double time-step]} {:keys [a]} [_ n+ n- ^double c]]
+  (conductance-stamp a n+ n- (/ c time-step)))
+
+(defmethod stamp-element [:c :transient] [{:keys [^double time-step]} {:keys [a z x]} [_ n+ n- ^double c]]
   (let [ieq (gensym 'ieq)
         geq (/ c time-step)]
     `(let [~ieq (* ~geq ~(voltage-diff x n+ n-))]
        ~(source-current-stamp z n+ n- ieq `(- ~ieq)))))
 
-(defmethod source-element [:d :non-linear] [{:keys [models]} _ [_ anode cathode model] x z]
-  (let [ieq (gensym 'ieq)
+(defmethod stamp-element [:d :non-linear] [{:keys [models]} {:keys [x a z]} [_ anode cathode model]]
+  (let [[ieq geq] (map gensym '[ieq geq])
         vt 0.025875
         is (-> model models :is double)
         is-by-vt (/ is vt)]
     `(let [vd# ~(voltage-diff x anode cathode)
            exp-vd-by-vt# (Math/exp (/ vd# ~vt))
-           geq# (* ~is-by-vt exp-vd-by-vt#)
            id# (* ~is (- exp-vd-by-vt# 1.0))
-           ~ieq (+ (- id#) (* geq# vd#))]
+           ~geq (* ~is-by-vt exp-vd-by-vt#)
+           ~ieq (+ (- id#) (* ~geq vd#))]
+       ~(conductance-stamp a anode cathode geq)
        ~(source-current-stamp z anode cathode ieq `(- ~ieq)))))
-
-(defn source-value ^double [[id n+ n- & opts]]
-  (or (first (filter number? opts)) 0.0))
-
-(defmethod source-element [:i :linear] [_ _ [_ n+ n- :as e] _ z]
-  (let [i (source-value e)]
-    (source-current-stamp z n+ n- (- i) i)))
 
 (def ^:dynamic *voltage-sources* {})
 
-(defmethod source-element [:v :linear] [{:keys [voltage-source->index netlist]} _ [id :as e] _ z]
+(defmethod stamp-element [:v :linear] [{:keys [voltage-source->index netlist]} {:keys [a z]} [id n+ n- :as e]]
   (let [dc-sweep? ((low-key id) (-> netlist commands :.dc sub-commands))
         v (source-value e)
         idx (voltage-source->index id)]
-    `(madd! ~z ~idx 0 ~(if dc-sweep?
-                         `(*voltage-sources* ~id ~v)
-                         v))))
+    `(do (madd! ~z ~idx 0 ~(if dc-sweep?
+                             `(*voltage-sources* ~id ~v)
+                             v))
+         ~(conductance-voltage-stamp a n+ n- (voltage-source->index id)))))
+
+(defmethod stamp-element [:e :linear] [{:keys [voltage-source->index]} {:keys [a]}
+                                       [id ^long out+ ^long out- ^long in+ ^long in- ^double gain]]
+  (let [idx (voltage-source->index id)]
+    `(do ~(conductance-voltage-stamp a out- out+ idx)
+         ~@(for [[^long n g] [[in+ gain] [in- (- gain)]]
+                 :when (not (ground? n))]
+             `(madd! ~a ~idx ~(dec n) ~g)))))
+
+(defmethod stamp-element [:i :linear] [_ {:keys [z]} [_ n+ n- :as e]]
+  (let [i (source-value e)]
+    (source-current-stamp z n+ n- (- i) i)))
+
+;; All About Circuits model ideal op amps as a vcvs.
+(defn u->e [[id ^long in+ ^long in- ^long out+]]
+  [(str "e" id) out+ 0 in+ in- 999e3])
+
+;; ideal op amp, this is only the linear version. QUCS technical.pdf p 117. QUCS source has a transient part.
+(defmethod stamp-element [:u :linear] [{:keys [voltage-source->index]} {:keys [a]}
+                                       [id ^long in+ ^long in- ^long out+]]
+  (let [idx (inc (long (voltage-source->index id)))]
+    `(do ~@(for [[^long n+ ^long n- v] [[idx in+ 1] [idx in- -1] [out+ idx 1]]
+                 :when (not (or (ground? n+) (ground? n-)))]
+             `(madd! ~a ~(dec n+) ~(dec n-) ~v)))))
+
+(defn compile-mna-stamp [{:keys [netlist] :as circuit}]
+  `(reify MNAStamp
+     ~@(for [[f {:keys [arglists]}] (:sigs MNAStamp)
+             :let [args (first arglists)
+                   syms (map gensym args)
+                   stamp (low-key (s/replace (name f) "-stamp!" ""))
+                   env (assoc (zipmap (map keyword args) syms) :stamp stamp)]]
+         `(~(symbol (name f)) [~@syms]
+           ~@(for [e (elements netlist)]
+               (stamp-element circuit env e))))))
+
+(for [[f {:keys [arglists]}] (:sigs MNAStamp)]
+  [f (first arglists)])
 
 (defn compile-circuit [{:keys [number-of-rows] :as circuit}]
-  (if (:compiled? circuit)
+  (if (:mna-stamp circuit)
     circuit
-    (assoc circuit
-      :compiled? true
-      :conductance-stamp (eval (mna-stamp circuit number-of-rows number-of-rows conductance-element))
-      :source-stamp (eval (mna-stamp circuit number-of-rows 1 source-element)))))
+    (assoc circuit :mna-stamp (eval (compile-mna-stamp circuit)))))
 
 ;; MNA Analysis
 
 (defn dc-operating-point
   ([{:keys [^long number-of-rows] :as circuit}]
    (dc-operating-point circuit (zero-matrix number-of-rows 1)))
-  ([{:keys [conductance-stamp source-stamp]} x]
-   (let [a (linear-stamp conductance-stamp x)
-         z (linear-stamp source-stamp x)]
+  ([{:keys [mna-stamp ^long number-of-rows]} x]
+   (let [a (zero-matrix number-of-rows number-of-rows)
+         z (zero-matrix number-of-rows 1)]
+     (linear-stamp! mna-stamp a z x)
      {:a a :z z :x (solve a z)})))
 
 (defn dc-analysis [circuit source start stop step]
@@ -291,23 +279,28 @@
 (def ^:dynamic *newton-tolerance* 1e-8)
 (def ^:dynamic *newton-iterations* 500)
 
-(defn non-linear-step-fn [{:keys [conductance-stamp source-stamp]} a z]
+(defn non-linear-step-fn [{:keys [mna-stamp ^long number-of-rows]} a z]
   (let [newton-tolerance (double *newton-tolerance*)
         newton-iterations (long *newton-iterations*)]
     (fn [x]
-      (let [z (add! (transient-stamp source-stamp x) z)]
+      (let [zt (add! (zero-matrix number-of-rows 1) z)]
+        (transient-stamp! mna-stamp zt x)
         (loop [xn-1 x iters newton-iterations]
           (if (zero? iters)
             (throw (ex-info "Didn't converge." {:x xn-1}))
-            (let [xn (solve (add! (non-linear-stamp conductance-stamp xn-1) a)
-                            (add! (non-linear-stamp source-stamp xn-1) z))]
-              (if (equals xn xn-1 newton-tolerance)
-                xn
-                (recur xn (dec iters))))))))))
+            (let [anl (add! (zero-matrix number-of-rows number-of-rows) a)
+                  znl (add! (zero-matrix number-of-rows 1) zt)]
+              (non-linear-stamp! mna-stamp anl znl xn-1)
+              (let [xn (solve anl znl)]
+                (if (equals xn xn-1 newton-tolerance)
+                  xn
+                  (recur xn (dec iters)))))))))))
 
-(defn linear-step-fn [{:keys [source-stamp]} a z]
+(defn linear-step-fn [{:keys [mna-stamp ^long number-of-rows]} a z]
   (fn [x]
-    (solve a (add! (transient-stamp source-stamp x) z))))
+    (let [zt (add! (zero-matrix number-of-rows 1) z)]
+      (transient-stamp! mna-stamp zt x)
+      (solve a zt))))
 
 (defn transient-step-fn [{:keys [non-linear?] :as circuit} a z]
   (let [step-fn (if non-linear?
