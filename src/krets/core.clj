@@ -189,16 +189,16 @@
                           `(Math/exp (- (/ (- ~t ~td) ~thet))))
                    (Math/sin (* ~(* 2 Math/PI freq) (+ ~t ~td)))))))))
 
-(defn pulse-source [[v1 v2 td ^double tr ^double tf ^double pw per]]
+(defn pulse-source [[^double v1 ^double v2 td ^double tr ^double tf ^double pw per]]
   (fn [t]
     (let [td (double (or td 0.0))]
       `(let [t# (double ~t)
-             tp# (rem t# ~per)]
+             tp# (rem (- t# ~td) ~per)]
          (cond
           (< t# ~td) ~v1
-          (< tp# ~tr) (+ ~v1 (* ~v2 (/ ~tr tp#)))
+          (< tp# ~tr) (+ ~v1 (* ~(- v2 v1) (/ tp# ~tr)))
           (< tp# ~(+ tr pw)) ~v2
-          (< tp# ~(+ tr pw tf)) (- ~v2 (* ~v1 (/ ~tr tp#)))
+          (< tp# ~(+ tr pw tf)) (- ~v2 (* ~(- v2 v1) (/ (- tp# ~tr ~pw) ~tf)))
           :else ~v1)))))
 
 (defn source-value [[id n+ n- & [t & opts :as source]]]
