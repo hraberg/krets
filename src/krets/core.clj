@@ -287,15 +287,16 @@
 (def ^:dynamic *newton-tolerance* 1e-8)
 (def ^:dynamic *newton-iterations* 500)
 
-(defn non-linear-step-fn [{:keys [mna-stamp solver number-of-rows]}]
+(defn non-linear-step-fn [{:keys [mna-stamp solver ^long number-of-rows]}]
   (let [newton-tolerance (double *newton-tolerance*)
         newton-iterations (long *newton-iterations*)
-        number-of-rows (long number-of-rows)]
+        anl (zero-matrix number-of-rows number-of-rows)
+        znl (zero-matrix number-of-rows 1)]
     (fn [a z x]
       (loop [xn-1 x
              iters newton-iterations
-             anl (zero-matrix number-of-rows number-of-rows)
-             znl (zero-matrix number-of-rows 1)]
+             anl (zero! anl)
+             znl (zero! znl)]
         (if (zero? iters)
           (throw (ex-info "Didn't converge." {:x xn-1}))
           (let [anl (add! anl a)
