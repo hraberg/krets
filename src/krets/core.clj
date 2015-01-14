@@ -199,7 +199,6 @@
           (< tp# ~tr) (+ ~v1 (* ~v2 (/ ~tr tp#)))
           (< tp# ~(+ tr pw)) ~v2
           (< tp# ~(+ tr pw tf)) (- ~v2 (* ~v1 (/ ~tr tp#)))
-          (>= tp# ~(+ tr pw tf)) ~v1
           :else ~v1)))))
 
 (defn source-value [[id n+ n- & [t & opts :as source]]]
