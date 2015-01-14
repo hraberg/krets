@@ -237,7 +237,7 @@
 (defmethod stamp-element [:d :non-linear] [{:keys [models]} {:keys [x a z]} [_ anode cathode model]]
   (let [[ieq geq] (map gensym '[ieq geq])
         vt 0.025875
-        is (double (get-in models [model :is] 1.0e-14))
+        {:keys [^double is]} (merge {:is 1.0e-14} (models model))
         is-by-vt (/ is vt)]
     `(let [vd# ~(voltage-diff x anode cathode)
            exp-vd-by-vt# (Math/exp (/ vd# ~vt))
