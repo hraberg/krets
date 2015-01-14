@@ -9,7 +9,9 @@
            [org.jfree.chart.plot XYPlot]
            [org.jfree.data.xy XYSeries XYSeriesCollection]
            [org.ejml.data DenseMatrix64F]
-           [org.ejml.ops CommonOps MatrixFeatures]))
+           [org.ejml.ops CommonOps MatrixFeatures]
+           [org.ejml.interfaces.linsol LinearSolver]
+           [org.ejml.factory LinearSolverFactory]))
 
 (set! *warn-on-reflection* true)
 (set! *unchecked-math* :warn-on-boxed)
@@ -19,15 +21,19 @@
 (defn mtag [m]
   (with-meta m {:tag `DenseMatrix64F}))
 
+(defn stag [s]
+  (with-meta s {:tag `LinearSolver}))
+
 (definline zero-matrix [rows cols]
   `(DenseMatrix64F. ~rows ~cols))
 
 (definline row-count [m]
   `(.numRows ~(mtag m)))
 
-(definline solve [a b]
-  `(doto (zero-matrix (row-count ~a) 1)
-     (->> (CommonOps/solve ~(mtag a) ~b))))
+(definline solve [s a b]
+  `(do (.setA ~(stag s) ~a)
+       (doto (zero-matrix (row-count ~a) 1)
+         (->> (.solve ~(stag s) ~b)))))
 
 (definline add! [a b]
   `(doto ~(mtag a) (-> (CommonOps/addEquals ~b))))
@@ -40,6 +46,9 @@
 
 (definline madd! [m row col v]
   `(.add ~(mtag m) ~row ~col ~v))
+
+(definline zero! [m]
+  `(doto ~(mtag m) .zero))
 
 ;; Netlist parser
 
@@ -123,7 +132,7 @@
   (low-key c))
 
 (defn circuit-info [circuit]
-  (dissoc circuit :netlist :title :mna-stamp :voltage-source->index))
+  (dissoc circuit :netlist :title :mna-stamp :voltage-source->index :solver))
 
 (defn parse-netlist [netlist-source]
   (let [[title & lines] (-> netlist-source
@@ -252,24 +261,23 @@
            ~@(for [e (elements netlist)]
                (stamp-element circuit env e))))))
 
-(for [[f {:keys [arglists]}] (:sigs MNAStamp)]
-  [f (first arglists)])
-
-(defn compile-circuit [{:keys [number-of-rows] :as circuit}]
+(defn compile-circuit [{:keys [^long number-of-rows] :as circuit}]
   (if (:mna-stamp circuit)
     circuit
-    (assoc circuit :mna-stamp (eval (compile-mna-stamp circuit)))))
+    (assoc circuit
+      :mna-stamp (eval (compile-mna-stamp circuit))
+      :solver (LinearSolverFactory/linear number-of-rows))))
 
 ;; MNA Analysis
 
 (defn dc-operating-point
   ([{:keys [^long number-of-rows] :as circuit}]
    (dc-operating-point circuit (zero-matrix number-of-rows 1)))
-  ([{:keys [mna-stamp ^long number-of-rows]} x]
+  ([{:keys [mna-stamp solver ^long number-of-rows]} x]
    (let [a (zero-matrix number-of-rows number-of-rows)
          z (zero-matrix number-of-rows 1)]
      (linear-stamp! mna-stamp a z x)
-     {:a a :z z :x (solve a z)})))
+     {:a a :z z :x (solve solver a z)})))
 
 (defn dc-analysis [circuit source start stop step]
   (for [v (concat (range start stop step) [stop])]
@@ -279,46 +287,47 @@
 (def ^:dynamic *newton-tolerance* 1e-8)
 (def ^:dynamic *newton-iterations* 500)
 
-(defn non-linear-step-fn [{:keys [mna-stamp ^long number-of-rows]} a z]
+(defn non-linear-step-fn [{:keys [mna-stamp solver ^long number-of-rows]}]
   (let [newton-tolerance (double *newton-tolerance*)
         newton-iterations (long *newton-iterations*)]
-    (fn [x]
-      (let [zt (add! (zero-matrix number-of-rows 1) z)]
-        (transient-stamp! mna-stamp zt x)
-        (loop [xn-1 x iters newton-iterations]
-          (if (zero? iters)
-            (throw (ex-info "Didn't converge." {:x xn-1}))
-            (let [anl (add! (zero-matrix number-of-rows number-of-rows) a)
-                  znl (add! (zero-matrix number-of-rows 1) zt)]
-              (non-linear-stamp! mna-stamp anl znl xn-1)
-              (let [xn (solve anl znl)]
-                (if (equals xn xn-1 newton-tolerance)
-                  xn
-                  (recur xn (dec iters)))))))))))
+    (fn [a z x]
+      (loop [xn-1 x
+             iters newton-iterations
+             anl (zero-matrix number-of-rows number-of-rows)
+             znl (zero-matrix number-of-rows 1)]
+        (if (zero? iters)
+          (throw (ex-info "Didn't converge." {:x xn-1}))
+          (let [anl (add! anl a)
+                znl (add! znl z)]
+            (non-linear-stamp! mna-stamp anl znl xn-1)
+            (let [xn (solve solver anl znl)]
+              (if (equals xn xn-1 newton-tolerance)
+                xn
+                (recur xn (dec iters) (zero! anl) (zero! znl))))))))))
 
-(defn linear-step-fn [{:keys [mna-stamp ^long number-of-rows]} a z]
-  (fn [x]
-    (let [zt (add! (zero-matrix number-of-rows 1) z)]
-      (transient-stamp! mna-stamp zt x)
-      (solve a zt))))
+(defn linear-step-fn [{:keys [solver]}]
+  (fn [a z _]
+    (solve solver a z)))
 
-(defn transient-step-fn [{:keys [non-linear?] :as circuit} a z]
-  (let [step-fn (if non-linear?
-                  non-linear-step-fn
-                  linear-step-fn)]
-    (step-fn circuit a z)))
+(defn transient-step-fn [{:keys [non-linear?] :as circuit}]
+  ((if non-linear?
+     non-linear-step-fn
+     linear-step-fn) circuit))
 
 (defn transient-analysis
   ([circuit ^double time-step ^double simulation-time]
    (transient-analysis circuit time-step simulation-time (dc-operating-point circuit)))
-  ([circuit ^double time-step ^double simulation-time {:keys [a z x]}]
-   (let [step (transient-step-fn circuit a z)
+  ([{:keys [mna-stamp number-of-rows] :as circuit}
+    ^double time-step ^double simulation-time {:keys [a x] z0 :z}]
+   (let [step (transient-step-fn circuit)
          end (+ simulation-time time-step)]
-     (loop [t 0.0 x x acc (transient [])]
+     (loop [t 0.0 x x acc (transient []) z (zero-matrix number-of-rows 1)]
        (if (> t end)
          (persistent! acc)
-         (let [x (step x)]
-           (recur (+ t time-step) x (conj! acc [t x]))))))))
+         (do (add! z z0)
+             (transient-stamp! mna-stamp z x)
+             (let [x (step a z x)]
+               (recur (+ t time-step) x (conj! acc [t x]) (zero! z)))))))))
 
 ;; Frontend
 
@@ -409,14 +418,17 @@
   (let [circuit (compile-circuit circuit)]
     (println title)
     (pp/print-table [(circuit-info circuit)])
+    (println)
     (let [{:keys [a z x] :as dc-result} (do (println "DC Operating Point Analysis")
                                             (time (dc-operating-point circuit)))]
+      (println)
       (println "A")
       (println a)
       (println "z")
       (println z)
       (println "x")
       (println x)
+      (println)
       (doseq [[_ source start stop step] (:.dc (commands netlist))
               :let [sweep (do (println  "DC Analysis")
                               (time (doall (dc-analysis circuit source start stop step))))]]
