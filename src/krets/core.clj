@@ -261,8 +261,8 @@
            ~@(for [e (elements netlist)]
                (stamp-element circuit env e))))))
 
-(defn compile-circuit [{:keys [^long number-of-rows] :as circuit}]
-  (if (:mna-stamp circuit)
+(defn compile-circuit [{:keys [mna-stamp ^long number-of-rows] :as circuit}]
+  (if mna-stamp
     circuit
     (assoc circuit
       :mna-stamp (eval (compile-mna-stamp circuit))
@@ -321,7 +321,8 @@
   ([{:keys [mna-stamp number-of-rows] :as circuit}
     ^double time-step ^double simulation-time {:keys [a x] z0 :z}]
    (let [step (transient-step-fn circuit)
-         end (+ simulation-time time-step)]
+         end (+ simulation-time time-step)
+         number-of-rows (long number-of-rows)]
      (loop [t 0.0 x x acc (transient []) z (zero-matrix number-of-rows 1)]
        (if (> t end)
          (persistent! acc)
