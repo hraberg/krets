@@ -181,7 +181,7 @@
 (defn sine-source [[vo va ^double freq td thet]]
   (fn [t]
     (let [td (or td 0.0)
-                         thet (double (or thet 0.0))]
+          thet (double (or thet 0.0))]
       `(if (< ~t ~td)
          ~vo
          (+ ~vo (* ~va ~(if (zero? thet)
