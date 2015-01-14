@@ -195,7 +195,7 @@
       `(let [t# (double ~t)
              tp# (rem t# ~per)]
          (cond
-          (< 0 t# ~td) ~v1
+          (< t# ~td) ~v1
           (< tp# ~tr) (+ ~v1 (* ~v2 (/ ~tr tp#)))
           (< tp# ~(+ tr pw)) ~v2
           (< tp# ~(+ tr pw tf)) (- ~v2 (* ~v1 (/ ~tr tp#)))
