@@ -172,21 +172,46 @@
            `(madd! ~a ~row ~col ~(if (= row col) `~gs `(- ~gs)))))))
 
 (defn conductance-voltage-stamp [a n+ n- idx]
-  `(do ~@(for [[^long n v] [[n+ 1] [n- -1]]
+  `(do ~@(for [[^long n v] [[n+ 1.0] [n- -1.0]]
                :when (not (ground? n))
                :let [n (dec n)]]
            `(do (madd! ~a ~n ~idx ~v)
                 (madd! ~a ~idx ~n ~v)))))
 
-(defn source-value [[id n+ n- & [t :as opts]]]
+(defn sine-source [[vo va ^double freq td thet]]
+  (fn [t]
+    (let [td (or td 0.0)
+                         thet (double (or thet 0.0))]
+      `(if (< ~t ~td)
+         ~vo
+         (+ ~vo (* ~va ~(if (zero? thet)
+                          1.0
+                          `(Math/exp (- (/ (- ~t ~td) ~thet))))
+                   (Math/sin (* ~(* 2 Math/PI freq) (+ ~t ~td)))))))))
+
+(defn pulse-source [[^double v1 ^double v2 ^double td ^double tr ^double tf ^double pw ^double per]]
+  (fn [t]
+    (let [td (double (or td 0.0))]
+      `(let [t# (double ~t)
+             tp# (rem t# ~per)]
+         (cond
+          (< 0 t# ~td) ~v1
+          (< tp# ~tr) (+ ~v1 (* ~v2 (/ ~tr tp#)))
+          (< tp# ~(+ tr pw)) ~v2
+          (< tp# ~(+ tr pw tf)) (- ~v2 (* ~v1 (/ ~tr tp#)))
+          (>= tp# ~(+ tr pw tf)) ~v1
+          :else ~v1)))))
+
+(defn source-value [[id n+ n- & [t & opts :as source]]]
   (let [t (if (string? t)
             (low-key t)
             :dc)
-        dc (or (first (filter number? opts)) 0.0)]
-    {:dc dc
-     :type t
-     :transient-fn (case t
-                     :dc (constantly dc))}))
+        dc (or (first (filter number? source)) 0.0)
+        f (case t
+            :dc (constantly dc)
+            :sin (sine-source opts)
+            :pulse (pulse-source opts))]
+    {:dc dc :type t :transient-fn f}))
 
 (defn source-current-stamp [z n+ n- in out]
   `(do ~@(for [[^long row i] [[n+ in] [n- out]]
@@ -230,7 +255,7 @@
         idx (voltage-source->index id)]
     `(do ~(when (= :dc type)
             `(madd! ~z ~idx 0 ~(if dc-sweep?
-                                 `(*voltage-sources* ~id ~dc)
+                                 `(double (*voltage-sources* ~id ~dc))
                                  dc)))
          ~(conductance-voltage-stamp a n+ n- (voltage-source->index id)))))
 
