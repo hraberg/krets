@@ -204,7 +204,7 @@
           (< tp# ~(+ tr pw tf)) (- ~v2 (* ~(- v2 v1) (/ (- tp# ~tr ~pw) ~tf)))
           :else ~v1)))))
 
-(defn source-value [[id n+ n- & [t & opts :as source]]]
+(defn independent-source [[id n+ n- & [t & opts :as source]]]
   (let [t (if (string? t)
             (low-key t)
             :dc)
@@ -213,7 +213,7 @@
             :dc (constantly dc)
             :sin (sine-source opts)
             :pulse (pulse-source opts))]
-    {:dc dc :type t :transient-fn f}))
+    {:dc dc :type t :transient f}))
 
 (defn source-current-stamp [z n+ n- in out]
   `(do ~@(for [[^long row i] [[n+ in] [n- out]]
@@ -252,7 +252,7 @@
 
 (defmethod stamp-element [:v :linear] [{:keys [voltage-source->index netlist]} {:keys [a z]} [id n+ n- :as e]]
   (let [dc-sweep? ((low-key id) (-> netlist commands :.dc sub-commands))
-        {:keys [dc type]} (source-value e)
+        {:keys [dc type]} (independent-source e)
         idx (voltage-source->index id)]
     `(do ~(when (= :dc type)
             `(madd! ~z ~idx 0 ~(if dc-sweep?
@@ -261,10 +261,10 @@
          ~(conductance-voltage-stamp a n+ n- (voltage-source->index id)))))
 
 (defmethod stamp-element [:v :transient] [{:keys [voltage-source->index]} {:keys [z t]} [id :as e]]
-  (let [{:keys [transient-fn type]} (source-value e)
+  (let [{:keys [transient type]} (independent-source e)
         idx (voltage-source->index id)]
     (when-not (= :dc type)
-      `(madd! ~z ~idx 0 ~(transient-fn t)))))
+      `(madd! ~z ~idx 0 ~(transient t)))))
 
 (defmethod stamp-element [:e :linear] [{:keys [voltage-source->index]} {:keys [a]}
                                        [id ^long out+ ^long out- ^long in+ ^long in- ^double gain]]
@@ -275,15 +275,15 @@
              `(madd! ~a ~idx ~(dec n) ~g)))))
 
 (defmethod stamp-element [:i :linear] [_ {:keys [z]} [_ n+ n- :as e]]
-  (let [{:keys [^double dc type]} (source-value e)]
+  (let [{:keys [^double dc type]} (independent-source e)]
     (when (= :dc type)
       (source-current-stamp z n+ n- (- dc) dc))))
 
 (defmethod stamp-element [:i :transient] [_ {:keys [z t]} [_ n+ n- :as e]]
   (let [i (gensym 'i)
-        {:keys [transient-fn type]} (source-value e)]
+        {:keys [transient type]} (independent-source e)]
     (when-not (= :dc type)
-      `(let [~i ^double ~(transient-fn t)]
+      `(let [~i ^double ~(transient t)]
          ~(source-current-stamp z n+ n- `(- i) i)))))
 
 ;; All About Circuits model ideal op amps as a vcvs.
