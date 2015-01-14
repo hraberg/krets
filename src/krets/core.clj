@@ -151,7 +151,7 @@
 
 (defprotocol MNAStamp
   (linear-stamp! [_ a z x])
-  (transient-stamp! [_ z x])
+  (transient-stamp! [_ z x t])
   (non-linear-stamp! [_ a z x]))
 
 (defn voltage-diff [x n+ n-]
@@ -178,8 +178,15 @@
            `(do (madd! ~a ~n ~idx ~v)
                 (madd! ~a ~idx ~n ~v)))))
 
-(defn source-value ^double [[id n+ n- & opts]]
-  (or (first (filter number? opts)) 0.0))
+(defn source-value [[id n+ n- & [t :as opts]]]
+  (let [t (if (string? t)
+            (low-key t)
+            :dc)
+        dc (or (first (filter number? opts)) 0.0)]
+    {:dc dc
+     :type t
+     :transient-fn (case t
+                     :dc (constantly dc))}))
 
 (defn source-current-stamp [z n+ n- in out]
   `(do ~@(for [[^long row i] [[n+ in] [n- out]]
@@ -219,12 +226,19 @@
 
 (defmethod stamp-element [:v :linear] [{:keys [voltage-source->index netlist]} {:keys [a z]} [id n+ n- :as e]]
   (let [dc-sweep? ((low-key id) (-> netlist commands :.dc sub-commands))
-        v (source-value e)
+        {:keys [dc type]} (source-value e)
         idx (voltage-source->index id)]
-    `(do (madd! ~z ~idx 0 ~(if dc-sweep?
-                             `(*voltage-sources* ~id ~v)
-                             v))
+    `(do ~(when (= :dc type)
+            `(madd! ~z ~idx 0 ~(if dc-sweep?
+                                 `(*voltage-sources* ~id ~dc)
+                                 dc)))
          ~(conductance-voltage-stamp a n+ n- (voltage-source->index id)))))
+
+(defmethod stamp-element [:v :transient] [{:keys [voltage-source->index]} {:keys [z t]} [id :as e]]
+  (let [{:keys [transient-fn type]} (source-value e)
+        idx (voltage-source->index id)]
+    (when-not (= :dc type)
+      `(madd! ~z ~idx 0 ~(transient-fn t)))))
 
 (defmethod stamp-element [:e :linear] [{:keys [voltage-source->index]} {:keys [a]}
                                        [id ^long out+ ^long out- ^long in+ ^long in- ^double gain]]
@@ -235,8 +249,16 @@
              `(madd! ~a ~idx ~(dec n) ~g)))))
 
 (defmethod stamp-element [:i :linear] [_ {:keys [z]} [_ n+ n- :as e]]
-  (let [i (source-value e)]
-    (source-current-stamp z n+ n- (- i) i)))
+  (let [{:keys [^double dc type]} (source-value e)]
+    (when (= :dc type)
+      (source-current-stamp z n+ n- (- dc) dc))))
+
+(defmethod stamp-element [:i :transient] [_ {:keys [z t]} [_ n+ n- :as e]]
+  (let [i (gensym 'i)
+        {:keys [transient-fn type]} (source-value e)]
+    (when-not (= :dc type)
+      `(let [~i ^double ~(transient-fn t)]
+         ~(source-current-stamp z n+ n- `(- i) i)))))
 
 ;; All About Circuits model ideal op amps as a vcvs.
 (defn u->e [[id ^long in+ ^long in- ^long out+]]
@@ -328,7 +350,7 @@
        (if (> t end)
          (persistent! acc)
          (do (add! z z0)
-             (transient-stamp! mna-stamp z x)
+             (transient-stamp! mna-stamp z x t)
              (let [x (step a z x)]
                (recur (+ t time-step) x (conj! acc [t x]) (zero! z)))))))))
 
