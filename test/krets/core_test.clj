@@ -3,9 +3,13 @@
         [clojure.test])
   (:require [clojure.java.io :as io]))
 
+(defn test-circuits []
+  (->> (io/file "test/krets/")
+       .listFiles
+       (filter (re? #"\.cir$"))))
+
 (deftest sanity-check
-  (doseq [f (.listFiles (io/file "test/krets/"))
-          :when (re-find #"\.cir$" (str f))]
+  (doseq [f (test-circuits)]
     (with-redefs [plot (constantly nil)
                   print-result (constantly nil)]
       (let [fail (volatile! nil)
