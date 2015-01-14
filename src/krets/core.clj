@@ -230,7 +230,7 @@
 (defmethod stamp-element [:c :linear] [{:keys [^double time-step]} {:keys [a]} [_ n+ n- ^double c]]
   (conductance-stamp a n+ n- (/ c time-step)))
 
-(defmethod stamp-element [:c :transient] [{:keys [^double time-step]} {:keys [a z x]} [_ n+ n- ^double c]]
+(defmethod stamp-element [:c :transient] [{:keys [^double time-step]} {:keys [z x]} [_ n+ n- ^double c]]
   (let [ieq (gensym 'ieq)
         geq (/ c time-step)]
     `(let [~ieq (* ~geq ~(voltage-diff x n+ n-))]
