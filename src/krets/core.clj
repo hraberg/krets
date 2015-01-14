@@ -87,8 +87,8 @@
 (defn element-type [[[c]]]
   (low-key c))
 
-(defn element-nodes [[t & nodes]]
-  (take ({:e 4 :u 3} t 2) nodes))
+(defn element-nodes [[_ & nodes :as e]]
+  (take ({:e 4 :u 3} (element-type e) 2) nodes))
 
 (defn number-of-nodes ^long [netlist]
   (->> (dissoc netlist :.)
