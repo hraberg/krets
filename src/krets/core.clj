@@ -287,9 +287,10 @@
 (def ^:dynamic *newton-tolerance* 1e-8)
 (def ^:dynamic *newton-iterations* 500)
 
-(defn non-linear-step-fn [{:keys [mna-stamp solver ^long number-of-rows]}]
+(defn non-linear-step-fn [{:keys [mna-stamp solver number-of-rows]}]
   (let [newton-tolerance (double *newton-tolerance*)
-        newton-iterations (long *newton-iterations*)]
+        newton-iterations (long *newton-iterations*)
+        number-of-rows (long number-of-rows)]
     (fn [a z x]
       (loop [xn-1 x
              iters newton-iterations
