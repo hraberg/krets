@@ -233,8 +233,8 @@
 (defmethod stamp-element [:c :transient] [{:keys [^double time-step]} {:keys [z x]} [_ n+ n- ^double c]]
   (let [ieq (gensym 'ieq)
         geq (/ c time-step)]
-    `(let [~ieq (* ~geq ~(voltage-diff x n+ n-))]
-       ~(source-current-stamp z n+ n- ieq `(- ~ieq)))))
+    `(let [~ieq (- (* ~geq ~(voltage-diff x n+ n-)))]
+       ~(source-current-stamp z n+ n- `(- ~ieq) ieq))))
 
 (defmethod stamp-element [:d :non-linear] [{:keys [models]} {:keys [x a z]} [_ anode cathode model]]
   (let [[ieq geq] (map gensym '[ieq geq])
