@@ -84,11 +84,17 @@
 (defn number-of-voltage-sources ^long [netlist]
   (count (mapcat netlist [:v :e :u])))
 
+(defn element-type [[[c]]]
+  (low-key c))
+
+(defn element-nodes [[t & nodes]]
+  (take ({:e 4 :u 3} t 2) nodes))
+
 (defn number-of-nodes ^long [netlist]
   (->> (dissoc netlist :.)
        vals
        (apply concat)
-       (mapcat #(map % [1 2]))
+       (mapcat element-nodes)
        (remove ground?)
        set
        count))
@@ -127,9 +133,6 @@
 
 (defn elements [netlist]
   (mapcat val (dissoc netlist :.)))
-
-(defn element-type [[[c]]]
-  (low-key c))
 
 (defn circuit-info [circuit]
   (dissoc circuit :netlist :title :mna-stamp :voltage-source->index :solver))
