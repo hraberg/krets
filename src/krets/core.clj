@@ -319,9 +319,9 @@
         pi-by-2-v-max (/ Math/PI (* 2 vmax))
         vmax-2-by-pi (* vmax (/ 2 Math/PI))]
     (code (let [vd (voltage-diff x in+ in-)
-                tmp (* ~pi-by-2-v-max ~gain ~vd)
-                v (* ~vmax-2-by-pi (Math/atan tmp))
-                g (/ ~gain (+ 1 (Math/pow tmp 2)))]
+                tmp (* pi-by-2-v-max gain vd)
+                v (* vmax-2-by-pi (Math/atan tmp))
+                g (/ gain (+ 1 (Math/pow tmp 2)))]
             (stamp-matrix z idx 1 (- (* g vd) v))
             (stamp-matrix a idx in+ g)
             (stamp-matrix a idx in- (- g))))))
