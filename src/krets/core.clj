@@ -238,15 +238,16 @@
 
 (defmethod stamp-element [:d :non-linear] [{:keys [models]} {:keys [x a z]} [_ anode cathode model]]
   (let [[ieq geq] (map gensym '[ieq geq])
-        vt 0.025875
-        {:keys [^double is]} (merge {:is 1.0e-14} (models model))]
+        defaults {:is 1.0e-14 :tnom 27.0}
+        {:keys [^double is ^double tnom]} (merge defaults (models model))
+        vt (* (- tnom -273.15) 8.6173e-5)]
     `(let [vd# ~(voltage-diff x anode cathode)
            exp-vd-by-vt# (Math/exp (/ vd# ~vt))
            id# (* ~is (- exp-vd-by-vt# 1.0))
            ~geq (* ~(/ is vt) exp-vd-by-vt#)
-           ~ieq (+ (- id#) (* ~geq vd#))]
+           ~ieq (- id# (* ~geq vd#))]
        ~(conductance-stamp a anode cathode geq)
-       ~(source-current-stamp z anode cathode ieq `(- ~ieq)))))
+       ~(source-current-stamp z anode cathode `(- ~ieq) ieq))))
 
 (def ^:dynamic *voltage-sources* {})
 
