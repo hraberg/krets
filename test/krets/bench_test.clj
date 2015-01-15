@@ -5,9 +5,9 @@
             [clojure.pprint :as pp]))
 
 (defn micro-bench [f]
-  (println "running" f)
   (let [c (-> f slurp parse-netlist compile-circuit)
         stub (constantly nil)]
+    (println "running" f (:number-of-nodes c) "nodes")
     (with-redefs [plot-result stub
                   print-result stub
                   println stub
@@ -22,3 +22,9 @@
 
 (deftest micro-bench-transient
   (micro-bench "test/krets/Transient_DC_ckt.cir"))
+
+(deftest micro-bench-fullwave-bridge-rectifier
+  (micro-bench "test/krets/fullwave-bridge-rectifier.cir"))
+
+(deftest micro-bench-instrumentation-amplifier
+  (micro-bench "test/krets/instrumentation-amplifier.cir"))

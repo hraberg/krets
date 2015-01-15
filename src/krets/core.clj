@@ -198,6 +198,13 @@
      (stamp-matrix ~z ~n+ 1 (- i#))
      (stamp-matrix ~z ~n- 1 i#)))
 
+(defmacro safe-exp [x]
+  (let [limit 70.0
+        limit-exp (Math/exp limit)]
+    `(if (< ~x ~limit)
+       (Math/exp ~x)
+       (+ ~limit-exp (+ 1.0 (- ~x ~limit))))))
+
 (defmacro code [& body]
   (let [ks (vec (keys &env))]
     `(cons 'do (->> '~body (w/postwalk-replace (zipmap '~ks ~ks))))))
@@ -258,12 +265,15 @@
     (code (let [ieq (- (* geq (voltage-diff x n+ n-)))]
             (source-current-stamp z n+ n- ieq)))))
 
+(defmethod stamp [:d :linear] [_ {:keys [a]} [_ anode cathode]]
+  (code (conductance-stamp a anode cathode 1e-12)))
+
 (defmethod stamp [:d :non-linear] [{:keys [models options]} {:keys [x a z]} [_ anode cathode model]]
   (let [defaults {:tnom (:tnom options) :is 1.0e-14}
         {:keys [^double is ^double tnom]} (merge defaults (models model))
         vt (* (- tnom -273.15) 8.6173e-5)]
     (code (let [vd (voltage-diff x anode cathode)
-                exp-vd-by-vt (Math/exp (/ vd vt))
+                exp-vd-by-vt (safe-exp (/ vd vt))
                 id (* is (- exp-vd-by-vt 1.0))
                 geq (* (/ is vt) exp-vd-by-vt)
                 ieq (- id (* geq vd))]
