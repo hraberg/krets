@@ -128,14 +128,19 @@
     time-step
     Double/NaN))
 
+(defn options [netlist]
+  (->> (for [[k v] (partition 2 (mapcat rest (:.options (commands netlist))))]
+         {(low-key k) v})
+       (apply merge {:tnom 27.0})))
+
 (defn non-linear? [netlist]
   (boolean (some netlist [:d])))
 
 (defn elements [netlist]
   (mapcat val (dissoc netlist :.)))
 
-(defn circuit-info [circuit]
-  (dissoc circuit :netlist :title :mna-stamp :voltage-source->index :solver))
+(defn circuit-info [{:keys [options] :as circuit}]
+  (dissoc circuit :netlist :title :mna-stamp :voltage-source->index :solver :models :options))
 
 (defn parse-netlist [netlist-source]
   (let [[title & lines] (-> netlist-source
@@ -147,7 +152,8 @@
                             (w/postwalk (some-fn spice-number identity))
                             (group-by element-type))]
     (apply merge (with-meta {:netlist parsed-netlist :title title} {:netlist-source netlist-source})
-           (for [k '[number-of-nodes number-of-voltage-sources number-of-rows time-step models non-linear? voltage-source->index]]
+           (for [k '[number-of-nodes number-of-voltage-sources number-of-rows
+                     time-step models non-linear? voltage-source->index options]]
              {(keyword k) ((ns-resolve 'krets.core k) parsed-netlist)}))))
 
 ;; MNA Compiler
@@ -236,9 +242,9 @@
     `(let [~ieq (- (* ~geq ~(voltage-diff x n+ n-)))]
        ~(source-current-stamp z n+ n- `(- ~ieq) ieq))))
 
-(defmethod stamp-element [:d :non-linear] [{:keys [models]} {:keys [x a z]} [_ anode cathode model]]
+(defmethod stamp-element [:d :non-linear] [{:keys [models options]} {:keys [x a z]} [_ anode cathode model]]
   (let [[ieq geq] (map gensym '[ieq geq])
-        defaults {:is 1.0e-14 :tnom 27.0}
+        defaults {:tnom (:tnom options) :is 1.0e-14}
         {:keys [^double is ^double tnom]} (merge defaults (models model))
         vt (* (- tnom -273.15) 8.6173e-5)]
     `(let [vd# ~(voltage-diff x anode cathode)
@@ -466,10 +472,12 @@
                           xs
                           (map #(report-node-voltage node number-of-nodes %) ys)))))))
 
-(defn batch [{:keys [title netlist] :as circuit}]
+(defn batch [{:keys [title netlist models] :as circuit}]
   (let [circuit (compile-circuit circuit)]
     (println title)
     (pp/print-table [(circuit-info circuit)])
+    (when models
+      (pp/print-table [models]))
     (println)
     (let [{:keys [a z x] :as dc-result} (do (println "DC Operating Point Analysis")
                                             (time (dc-operating-point circuit)))]
