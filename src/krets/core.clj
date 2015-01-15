@@ -46,6 +46,7 @@
 
 (definline madd! [m row col v]
   `(.add ~(mtag m) ~row ~col ~v))
+
 (definline zero! [m]
   `(doto ~(mtag m) .zero))
 
