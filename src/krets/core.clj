@@ -208,12 +208,13 @@
     (let [td (double (or td 0.0))]
       `(let [t# (double ~t)
              tp# (rem (- t# ~td) ~per)]
-         (cond
-          (< t# ~td) ~v1
-          (< tp# ~tr) (+ ~v1 (* ~(- v2 v1) (/ tp# ~tr)))
-          (< tp# ~(+ tr pw)) ~v2
-          (< tp# ~(+ tr pw tf)) (- ~v2 (* ~(- v2 v1) (/ (- tp# ~tr ~pw) ~tf)))
-          :else ~v1)))))
+         (-> (cond
+              (< t# ~td) ~v1
+              (< tp# ~tr) (+ ~v1 (* ~(- v2 v1) (/ tp# ~tr)))
+              (< tp# ~(+ tr pw)) ~v2
+              (< tp# ~(+ tr pw tf)) (- ~v2 (* ~(- v2 v1) (/ (- tp# ~tr ~pw) ~tf)))
+              :else ~v1)
+             double)))))
 
 (defn independent-source [[id n+ n- & [t & opts :as source]]]
   (let [t (if (string? t)
@@ -289,7 +290,7 @@
   (let [i (gensym 'i)
         {:keys [transient type]} (independent-source e)]
     (when-not (= :dc type)
-      `(let [~i ^double ~(transient t)]
+      `(let [~i ~(transient t)]
          ~(source-current-stamp z n+ n- i)))))
 
 ;; All About Circuits model ideal op amps as a vcvs.
