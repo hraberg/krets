@@ -203,12 +203,13 @@
           thet (double (or thet 0.0))
           freq-2-pi (* 2 Math/PI freq)]
       (code
-       (if (< t td)
-          vo
-          (+ vo (* va (if (zero? thet)
-                        1.0
-                        (Math/exp (- (/ (- t td) thet))))
-                   (Math/sin (* freq-2-pi (+ t td))))))))))
+       (let [t (double t)]
+         (if (< t td)
+           vo
+           (+ vo (* va (if (zero? thet)
+                         1.0
+                         (Math/exp (- (/ (- t td) thet))))
+                    (Math/sin (* freq-2-pi (+ t td)))))))))))
 
 (defn pulse-source [[^double v1 ^double v2 td ^double tr ^double tf ^double pw per]]
   (fn [t]
