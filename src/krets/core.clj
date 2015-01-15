@@ -320,7 +320,6 @@
                :when (not (or (ground? n+) (ground? n-)))]
            `(madd! ~a ~(dec n+) ~(dec n-) ~gv)))))
 
-
 (defn compile-mna-stamp [{:keys [netlist] :as circuit}]
   `(reify MNAStamp
      ~@(for [[f {:keys [arglists]}] (:sigs MNAStamp)
