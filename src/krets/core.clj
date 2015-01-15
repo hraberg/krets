@@ -46,7 +46,6 @@
 
 (definline madd! [m row col v]
   `(.add ~(mtag m) ~row ~col ~v))
-
 (definline zero! [m]
   `(doto ~(mtag m) .zero))
 
@@ -134,7 +133,7 @@
        (apply merge {:tnom 27.0})))
 
 (defn non-linear? [netlist]
-  (boolean (some netlist [:d])))
+  (boolean (some netlist [:d :u])))
 
 (defn elements [netlist]
   (mapcat val (dissoc netlist :.)))
@@ -297,13 +296,30 @@
 (defn u->e [[id ^long in+ ^long in- ^long out+]]
   [(str "e" id) out+ 0 in+ in- 999e3])
 
-;; ideal op amp, this is only the linear version. QUCS technical.pdf p 117. QUCS source has a transient part.
 (defmethod stamp-element [:u :linear] [{:keys [voltage-source->index]} {:keys [a]}
                                        [id ^long in+ ^long in- ^long out+]]
   (let [idx (inc (long (voltage-source->index id)))]
-    `(do ~@(for [[^long n+ ^long n- v] [[idx in+ 1] [idx in- -1] [out+ idx 1]]
+    `(do ~@(for [[^long n+ ^long n- v] [[idx out+ -1] [out+ idx 1]]
                  :when (not (or (ground? n+) (ground? n-)))]
              `(madd! ~a ~(dec n+) ~(dec n-) ~v)))))
+
+(defmethod stamp-element [:u :non-linear] [{:keys [voltage-source->index]} {:keys [a z x]}
+                                          [id ^long in+ ^long in- ^long out+]]
+  (let [g (gensym 'g)
+        idx (inc (long (voltage-source->index id)))
+        gain 1e6
+        vmax 15
+        pi-by-2-v-max (/ Math/PI (* 2 vmax))
+        vmax-2-by-pi (* vmax (/ 2 Math/PI))]
+    `(let [vd# ~(voltage-diff x in+ in-)
+           tmp# (* ~pi-by-2-v-max ~gain vd#)
+           v# (* ~vmax-2-by-pi (Math/atan tmp#))
+           ~g (/ ~gain (+ 1 (Math/pow tmp# 2)))]
+       (madd! ~z ~(dec idx) 0 (- (* ~g vd#) v#))
+       ~@(for [[^long n+ ^long n- gv] [[idx in+ g] [idx in- `(- ~g)]]
+               :when (not (or (ground? n+) (ground? n-)))]
+           `(madd! ~a ~(dec n+) ~(dec n-) ~gv)))))
+
 
 (defn compile-mna-stamp [{:keys [netlist] :as circuit}]
   `(reify MNAStamp
