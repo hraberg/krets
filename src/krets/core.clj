@@ -520,14 +520,15 @@
         (print-result circuit series :tran "t")
         (plot-result circuit series :tran "t")))))
 
-(def ^:dynamic *spice-command* "ngspice")
-
-(defn spice [circuit]
-  (let [{:keys [out err ^long exit]} (sh/sh *spice-command* "-b" :in (-> circuit meta :netlist))]
-    (when out
-      (println out))
-    (when (not (zero? exit))
-      (println err))))
+(defn spice
+  ([circuit]
+   (spice ["ngspice" "-b"] circuit))
+  ([cmd circuit]
+   (let [{:keys [out err ^long exit]} (apply sh/sh (concat cmd  [:in (-> circuit meta :netlist-source)]))]
+     (when out
+       (println out))
+      (when (not (zero? exit))
+        (println err)))))
 
 (defn process-file [f]
   (-> f slurp parse-netlist batch))
