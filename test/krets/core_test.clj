@@ -20,5 +20,6 @@
                     (catch Exception e
                       (vreset! fail e))))]
         (when-let [e @fail]
+          (println f)
           (println out)
           (throw e))))))

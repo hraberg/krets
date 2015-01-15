@@ -106,7 +106,7 @@
 (defn voltage-source->index [netlist]
   (let [number-of-nodes (number-of-nodes netlist)]
     (into {} (for [[^long idx [id]] (map-indexed vector (mapcat netlist [:v :e :u]))]
-               [id (+ number-of-nodes idx)]))))
+               [id (inc (+ number-of-nodes idx))]))))
 
 (defn commands [netlist]
   (group-by (comp low-key first) (:. netlist)))
@@ -171,21 +171,26 @@
      (ground? n-) (term n+)
      :else `(- ~(term n+) ~(term n-)))))
 
+;; takes 1 based indexes, 0 is ground.
+(defn stamp-matrix [m ^long row ^long col v]
+  (when-not (or (ground? row) (ground? col))
+    `(madd! ~m ~(dec row) ~(dec col) ~v)))
+
 (defn conductance-stamp [a n+ n- g]
   (let [gs (gensym 'g)]
     `(let [~gs ~g]
        ~@(for [^long row [n+ n-]
-               ^long col [n+ n-]
-               :when (not (or (ground? row) (ground? col)))
-               :let [row (dec row) col (dec col)]]
-           `(madd! ~a ~row ~col ~(if (= row col) `~gs `(- ~gs)))))))
+               ^long col [n+ n-]]
+           (stamp-matrix a row col (if (= row col) gs `(- ~gs)))))))
 
 (defn conductance-voltage-stamp [a n+ n- idx]
-  `(do ~@(for [[^long n v] [[n+ 1.0] [n- -1.0]]
-               :when (not (ground? n))
-               :let [n (dec n)]]
-           `(do (madd! ~a ~n ~idx ~v)
-                (madd! ~a ~idx ~n ~v)))))
+  `(do ~@(for [[^long n v] [[n+ 1.0] [n- -1.0]]]
+           `(do ~(stamp-matrix a n idx v)
+                ~(stamp-matrix a idx n v)))))
+
+(defn source-current-stamp [z n+ n- in out]
+  `(do ~@(for [[row i] [[n+ in] [n- out]]]
+           (stamp-matrix z row 1 i))))
 
 (defn sine-source [[vo va ^double freq td thet]]
   (fn [t]
@@ -220,11 +225,6 @@
             :sin (sine-source opts)
             :pulse (pulse-source opts))]
     {:dc dc :type t :transient f}))
-
-(defn source-current-stamp [z n+ n- in out]
-  `(do ~@(for [[^long row i] [[n+ in] [n- out]]
-               :when (not (ground? row))]
-           `(madd! ~z ~(dec row) 0 ~i))))
 
 (defmulti stamp-element (fn [circuit {:keys [stamp] :as env} e] [(element-type e) stamp]))
 
@@ -262,24 +262,23 @@
         {:keys [dc type]} (independent-source e)
         idx (voltage-source->index id)]
     `(do ~(when (= :dc type)
-            `(madd! ~z ~idx 0 ~(if dc-sweep?
-                                 `(double (*voltage-sources* ~id ~dc))
-                                 dc)))
-         ~(conductance-voltage-stamp a n+ n- (voltage-source->index id)))))
+            (stamp-matrix z idx 1 (if dc-sweep?
+                                    `(double (*voltage-sources* ~id ~dc))
+                                    dc)))
+         ~(conductance-voltage-stamp a n+ n- idx))))
 
 (defmethod stamp-element [:v :transient] [{:keys [voltage-source->index]} {:keys [z t]} [id :as e]]
   (let [{:keys [transient type]} (independent-source e)
         idx (voltage-source->index id)]
     (when-not (= :dc type)
-      `(madd! ~z ~idx 0 ~(transient t)))))
+      (stamp-matrix z idx 1 (transient t)))))
 
 (defmethod stamp-element [:e :linear] [{:keys [voltage-source->index]} {:keys [a]}
                                        [id ^long out+ ^long out- ^long in+ ^long in- ^double gain]]
   (let [idx (voltage-source->index id)]
     `(do ~(conductance-voltage-stamp a out- out+ idx)
-         ~@(for [[^long n g] [[in+ gain] [in- (- gain)]]
-                 :when (not (ground? n))]
-             `(madd! ~a ~idx ~(dec n) ~g)))))
+         ~@(for [[^long n g] [[in+ gain] [in- (- gain)]]]
+             (stamp-matrix a idx n g)))))
 
 (defmethod stamp-element [:i :linear] [_ {:keys [z]} [_ n+ n- :as e]]
   (let [{:keys [^double dc type]} (independent-source e)]
@@ -299,27 +298,25 @@
 
 (defmethod stamp-element [:u :linear] [{:keys [voltage-source->index]} {:keys [a]}
                                        [id ^long in+ ^long in- ^long out+]]
-  (let [idx (inc (long (voltage-source->index id)))]
-    `(do ~@(for [[^long n+ ^long n- v] [[idx out+ -1] [out+ idx 1]]
-                 :when (not (or (ground? n+) (ground? n-)))]
-             `(madd! ~a ~(dec n+) ~(dec n-) ~v)))))
+  (let [idx (voltage-source->index id)]
+    `(do ~@(for [[^long n+ ^long n- v] [[idx out+ -1] [out+ idx 1]]]
+             (stamp-matrix a n+ n- v)))))
 
 (defmethod stamp-element [:u :non-linear] [{:keys [voltage-source->index]} {:keys [a z x]}
                                           [id ^long in+ ^long in- ^long out+]]
-  (let [g (gensym 'g)
-        idx (inc (long (voltage-source->index id)))
+  (let [[g vd v] (map gensym '[g vd v])
+        idx (voltage-source->index id)
         gain 1e6
         vmax 15
         pi-by-2-v-max (/ Math/PI (* 2 vmax))
         vmax-2-by-pi (* vmax (/ 2 Math/PI))]
-    `(let [vd# ~(voltage-diff x in+ in-)
-           tmp# (* ~pi-by-2-v-max ~gain vd#)
-           v# (* ~vmax-2-by-pi (Math/atan tmp#))
+    `(let [~vd ~(voltage-diff x in+ in-)
+           tmp# (* ~pi-by-2-v-max ~gain ~vd)
+           ~v (* ~vmax-2-by-pi (Math/atan tmp#))
            ~g (/ ~gain (+ 1 (Math/pow tmp# 2)))]
-       (madd! ~z ~(dec idx) 0 (- (* ~g vd#) v#))
-       ~@(for [[^long n+ ^long n- gv] [[idx in+ g] [idx in- `(- ~g)]]
-               :when (not (or (ground? n+) (ground? n-)))]
-           `(madd! ~a ~(dec n+) ~(dec n-) ~gv)))))
+       ~(stamp-matrix z idx 1 `(- (* ~g ~vd) ~v))
+       ~@(for [[^long n+ ^long n- gv] [[idx in+ g] [idx in- `(- ~g)]]]
+           (stamp-matrix a n+ n- gv)))))
 
 (defn compile-mna-stamp [{:keys [netlist] :as circuit}]
   `(reify MNAStamp
