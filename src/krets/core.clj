@@ -234,22 +234,22 @@
             :pulse (pulse-source opts))]
     {:dc dc :type t :transient f}))
 
-(defmulti stamp-element (fn [circuit {:keys [stamp] :as env} e] [(element-type e) stamp]))
+(defmulti stamp (fn [circuit {:keys [type] :as env} e] [(element-type e) type]))
 
-(defmethod stamp-element :default [_ _ _])
+(defmethod stamp :default [_ _ _])
 
-(defmethod stamp-element [:r :linear] [_ {:keys [a]} [_ n+ n- ^double r]]
+(defmethod stamp [:r :linear] [_ {:keys [a]} [_ n+ n- ^double r]]
   (code (conductance-stamp a n+ n- (/ 1.0 r))))
 
-(defmethod stamp-element [:c :linear] [{:keys [^double time-step]} {:keys [a]} [_ n+ n- ^double c]]
+(defmethod stamp [:c :linear] [{:keys [^double time-step]} {:keys [a]} [_ n+ n- ^double c]]
   (code (conductance-stamp a n+ n- (/ c time-step))))
 
-(defmethod stamp-element [:c :transient] [{:keys [^double time-step]} {:keys [z x]} [_ n+ n- ^double c]]
+(defmethod stamp [:c :transient] [{:keys [^double time-step]} {:keys [z x]} [_ n+ n- ^double c]]
   (let [geq (/ c time-step)]
     (code (let [ieq (- (* geq (voltage-diff x n+ n-)))]
             (source-current-stamp z n+ n- ieq)))))
 
-(defmethod stamp-element [:d :non-linear] [{:keys [models options]} {:keys [x a z]} [_ anode cathode model]]
+(defmethod stamp [:d :non-linear] [{:keys [models options]} {:keys [x a z]} [_ anode cathode model]]
   (let [defaults {:tnom (:tnom options) :is 1.0e-14}
         {:keys [^double is ^double tnom]} (merge defaults (models model))
         vt (* (- tnom -273.15) 8.6173e-5)]
@@ -263,7 +263,7 @@
 
 (def ^:dynamic *voltage-sources* {})
 
-(defmethod stamp-element [:v :linear] [{:keys [voltage-source->index netlist]} {:keys [a z]} [id n+ n- :as e]]
+(defmethod stamp [:v :linear] [{:keys [voltage-source->index netlist]} {:keys [a z]} [id n+ n- :as e]]
   (let [dc-sweep? ((low-key id) (-> netlist commands :.dc sub-commands))
         {:keys [dc type]} (independent-source e)
         idx (voltage-source->index id)]
@@ -272,26 +272,26 @@
            (= :dc type) (stamp-matrix z idx 1 dc))
           (conductance-voltage-stamp a n+ n- idx))))
 
-(defmethod stamp-element [:v :transient] [{:keys [voltage-source->index]} {:keys [z t]} [id :as e]]
+(defmethod stamp [:v :transient] [{:keys [voltage-source->index]} {:keys [z t]} [id :as e]]
   (let [{:keys [transient type]} (independent-source e)
         idx (voltage-source->index id)
         transient (transient t)]
     (when-not (= :dc type)
       (code (stamp-matrix z idx 1 transient)))))
 
-(defmethod stamp-element [:e :linear] [{:keys [voltage-source->index]} {:keys [a]}
+(defmethod stamp [:e :linear] [{:keys [voltage-source->index]} {:keys [a]}
                                        [id ^long out+ ^long out- ^long in+ ^long in- ^double gain]]
   (let [idx (voltage-source->index id)]
     (code (conductance-voltage-stamp a out- out+ idx)
           (stamp-matrix a idx in+ gain)
           (stamp-matrix a idx in- (- gain)))))
 
-(defmethod stamp-element [:i :linear] [_ {:keys [z]} [_ n+ n- :as e]]
+(defmethod stamp [:i :linear] [_ {:keys [z]} [_ n+ n- :as e]]
   (let [{:keys [^double dc type]} (independent-source e)]
     (when (= :dc type)
       (code (source-current-stamp z n+ n- dc)))))
 
-(defmethod stamp-element [:i :transient] [_ {:keys [z t]} [_ n+ n- :as e]]
+(defmethod stamp [:i :transient] [_ {:keys [z t]} [_ n+ n- :as e]]
   (let [{:keys [transient type]} (independent-source e)
         transient (transient t)]
     (when-not (= :dc type)
@@ -301,13 +301,13 @@
 (defn u->e [[id ^long in+ ^long in- ^long out+]]
   [(str "e" id) out+ 0 in+ in- 999e3])
 
-(defmethod stamp-element [:u :linear] [{:keys [voltage-source->index]} {:keys [a]}
+(defmethod stamp [:u :linear] [{:keys [voltage-source->index]} {:keys [a]}
                                        [id ^long in+ ^long in- ^long out+]]
   (let [idx (voltage-source->index id)]
     (code (stamp-matrix a idx out+ -1.0)
           (stamp-matrix a out+ idx 1.0))))
 
-(defmethod stamp-element [:u :non-linear] [{:keys [voltage-source->index]} {:keys [a z x]}
+(defmethod stamp [:u :non-linear] [{:keys [voltage-source->index]} {:keys [a z x]}
                                           [id ^long in+ ^long in- ^long out+]]
   (let [idx (voltage-source->index id)
         gain 1e6
@@ -327,11 +327,11 @@
      ~@(for [[f {:keys [arglists]}] (:sigs MNAStamp)
              :let [args (first arglists)
                    syms (map gensym args)
-                   stamp (low-key (s/replace (name f) "-stamp!" ""))
-                   env (assoc (zipmap (map keyword args) syms) :stamp stamp)]]
+                   t (low-key (s/replace (name f) "-stamp!" ""))
+                   env (assoc (zipmap (map keyword args) syms) :type t)]]
          `(~(symbol (name f)) [~@syms]
            ~@(for [e (elements netlist)]
-               (stamp-element circuit env e))))))
+               (stamp circuit env e))))))
 
 (defn compile-circuit [{:keys [mna-stamp ^long number-of-rows] :as circuit}]
   (if mna-stamp
