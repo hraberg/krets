@@ -197,29 +197,32 @@
   (let [ks (vec (keys &env))]
     `(cons 'do (->> '~body (w/postwalk-replace (zipmap '~ks ~ks))))))
 
-(defn sine-source [[vo va ^double freq td thet]]
+(defn sin-source [[vo va ^double freq td thet]]
   (fn [t]
     (let [td (or td 0.0)
-          thet (double (or thet 0.0))]
+          thet (double (or thet 0.0))
+          freq-2-pi (* 2 Math/PI freq)]
       (code
        (if (< t td)
           vo
           (+ vo (* va (if (zero? thet)
                         1.0
                         (Math/exp (- (/ (- t td) thet))))
-                   (Math/sin (* (* 2 Math/PI freq) (+ t td))))))))))
+                   (Math/sin (* freq-2-pi (+ t td))))))))))
 
 (defn pulse-source [[^double v1 ^double v2 td ^double tr ^double tf ^double pw per]]
   (fn [t]
-    (let [td (double (or td 0.0))]
+    (let [td (double (or td 0.0))
+          pw-end (+ tr pw)
+          f-end (+ tr pw tf)]
       (code
        (let [t (double t)
              tp (rem (- t td) per)]
          (-> (cond
               (< t td) v1
               (< tp tr) (+ v1 (* (- v2 v1) (/ tp tr)))
-              (< tp (+ tr pw)) v2
-              (< tp (+ tr pw tf)) (- v2 (* (- v2 v1) (/ (- tp tr pw) tf)))
+              (< tp pw-end) v2
+              (< tp f-end) (- v2 (* (- v2 v1) (/ (- tp tr pw) tf)))
               :else v1)
              double))))))
 
@@ -230,7 +233,7 @@
         dc (or (first (filter number? source)) 0.0)
         f (case t
             :dc (constantly dc)
-            :sin (sine-source opts)
+            :sin (sin-source opts)
             :pulse (pulse-source opts))]
     {:dc dc :type t :transient f}))
 
