@@ -188,9 +188,9 @@
            `(do ~(stamp-matrix a n idx v)
                 ~(stamp-matrix a idx n v)))))
 
-(defn source-current-stamp [z n+ n- in out]
-  `(do ~@(for [[row i] [[n+ in] [n- out]]]
-           (stamp-matrix z row 1 i))))
+(defn source-current-stamp [z n+ n- i]
+  `(do ~(stamp-matrix z n+ 1 `(- ~i))
+       ~(stamp-matrix z n- 1 i)))
 
 (defn sine-source [[vo va ^double freq td thet]]
   (fn [t]
@@ -240,7 +240,7 @@
   (let [ieq (gensym 'ieq)
         geq (/ c time-step)]
     `(let [~ieq (- (* ~geq ~(voltage-diff x n+ n-)))]
-       ~(source-current-stamp z n+ n- `(- ~ieq) ieq))))
+       ~(source-current-stamp z n+ n- ieq))))
 
 (defmethod stamp-element [:d :non-linear] [{:keys [models options]} {:keys [x a z]} [_ anode cathode model]]
   (let [[ieq geq] (map gensym '[ieq geq])
@@ -253,7 +253,7 @@
            ~geq (* ~(/ is vt) exp-vd-by-vt#)
            ~ieq (- id# (* ~geq vd#))]
        ~(conductance-stamp a anode cathode geq)
-       ~(source-current-stamp z anode cathode `(- ~ieq) ieq))))
+       ~(source-current-stamp z anode cathode ieq))))
 
 (def ^:dynamic *voltage-sources* {})
 
@@ -277,20 +277,20 @@
                                        [id ^long out+ ^long out- ^long in+ ^long in- ^double gain]]
   (let [idx (voltage-source->index id)]
     `(do ~(conductance-voltage-stamp a out- out+ idx)
-         ~@(for [[^long n g] [[in+ gain] [in- (- gain)]]]
-             (stamp-matrix a idx n g)))))
+         ~(stamp-matrix a idx in+ gain)
+         ~(stamp-matrix a idx in- (- gain)))))
 
 (defmethod stamp-element [:i :linear] [_ {:keys [z]} [_ n+ n- :as e]]
   (let [{:keys [^double dc type]} (independent-source e)]
     (when (= :dc type)
-      (source-current-stamp z n+ n- (- dc) dc))))
+      (source-current-stamp z n+ n- dc))))
 
 (defmethod stamp-element [:i :transient] [_ {:keys [z t]} [_ n+ n- :as e]]
   (let [i (gensym 'i)
         {:keys [transient type]} (independent-source e)]
     (when-not (= :dc type)
       `(let [~i ^double ~(transient t)]
-         ~(source-current-stamp z n+ n- `(- i) i)))))
+         ~(source-current-stamp z n+ n- i)))))
 
 ;; All About Circuits model ideal op amps as a vcvs.
 (defn u->e [[id ^long in+ ^long in- ^long out+]]
@@ -299,8 +299,8 @@
 (defmethod stamp-element [:u :linear] [{:keys [voltage-source->index]} {:keys [a]}
                                        [id ^long in+ ^long in- ^long out+]]
   (let [idx (voltage-source->index id)]
-    `(do ~@(for [[^long n+ ^long n- v] [[idx out+ -1] [out+ idx 1]]]
-             (stamp-matrix a n+ n- v)))))
+    `(do ~(stamp-matrix a idx out+ -1.0)
+         ~(stamp-matrix a out+ idx 1.0))))
 
 (defmethod stamp-element [:u :non-linear] [{:keys [voltage-source->index]} {:keys [a z x]}
                                           [id ^long in+ ^long in- ^long out+]]
@@ -315,8 +315,8 @@
            ~v (* ~vmax-2-by-pi (Math/atan tmp#))
            ~g (/ ~gain (+ 1 (Math/pow tmp# 2)))]
        ~(stamp-matrix z idx 1 `(- (* ~g ~vd) ~v))
-       ~@(for [[^long n+ ^long n- gv] [[idx in+ g] [idx in- `(- ~g)]]]
-           (stamp-matrix a n+ n- gv)))))
+       ~(stamp-matrix a idx in+ g)
+       ~(stamp-matrix a idx in- `(- g)))))
 
 (defn compile-mna-stamp [{:keys [netlist] :as circuit}]
   `(reify MNAStamp
