@@ -316,7 +316,7 @@
            ~g (/ ~gain (+ 1 (Math/pow tmp# 2)))]
        ~(stamp-matrix z idx 1 `(- (* ~g ~vd) ~v))
        ~(stamp-matrix a idx in+ g)
-       ~(stamp-matrix a idx in- `(- g)))))
+       ~(stamp-matrix a idx in- `(- ~g)))))
 
 (defn compile-mna-stamp [{:keys [netlist] :as circuit}]
   `(reify MNAStamp
