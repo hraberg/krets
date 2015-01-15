@@ -30,10 +30,15 @@
 (definline row-count [m]
   `(.numRows ~(mtag m)))
 
-(definline solve [s a b]
-  `(do (.setA ~(stag s) ~a)
-       (doto (zero-matrix (row-count ~a) 1)
-         (->> (.solve ~(stag s) ~b)))))
+(definline linear-solver [d]
+  `(LinearSolverFactory/linear ~d))
+
+(definline set-a-matrix! [s a]
+  `(.setA ~(stag s) ~a))
+
+(definline solve [s b]
+  `(doto (zero-matrix (row-count ~b) 1)
+     (->> (.solve ~(stag s) ~b))))
 
 (definline add! [a b]
   `(doto ~(mtag a) (-> (CommonOps/addEquals ~b))))
@@ -343,7 +348,7 @@
     (assoc circuit
       :mna-stamp (binding [*ns* (find-ns 'krets.core)]
                    (eval (compile-mna-stamp circuit)))
-      :solver (LinearSolverFactory/linear number-of-rows))))
+      :solver (linear-solver number-of-rows))))
 
 ;; MNA Analysis
 
@@ -354,7 +359,8 @@
    (let [a (zero-matrix number-of-rows number-of-rows)
          z (zero-matrix number-of-rows 1)]
      (linear-stamp! mna-stamp a z x)
-     {:a a :z z :x (solve solver a z)})))
+     (set-a-matrix! solver a)
+     {:a a :z z :x (solve solver z)})))
 
 (defn dc-analysis [circuit source start stop step]
   (for [v (concat (range start stop step) [stop])]
@@ -379,14 +385,15 @@
           (let [anl (add! anl a)
                 znl (add! znl z)]
             (non-linear-stamp! mna-stamp anl znl xn-1)
-            (let [xn (solve solver anl znl)]
+            (set-a-matrix! solver anl)
+            (let [xn (solve solver znl)]
               (if (equals xn xn-1 newton-tolerance)
                 xn
                 (recur xn (dec iters) (zero! anl) (zero! znl))))))))))
 
 (defn linear-step-fn [{:keys [solver]}]
   (fn [a z _]
-    (solve solver a z)))
+    (solve solver z)))
 
 (defn transient-step-fn [{:keys [non-linear?] :as circuit}]
   ((if non-linear?
