@@ -2,6 +2,7 @@
   (:require [clojure.string :as s]
             [clojure.walk :as w]
             [clojure.java.shell :as sh]
+            [clojure.java.io :as io]
             [clojure.pprint :as pp])
   (:import [java.awt Color]
            [javax.swing JFrame]
@@ -11,7 +12,11 @@
            [org.ejml.data DenseMatrix64F]
            [org.ejml.ops CommonOps MatrixFeatures]
            [org.ejml.interfaces.linsol LinearSolver]
-           [org.ejml.factory LinearSolverFactory]))
+           [org.ejml.factory LinearSolverFactory]
+           [javax.sound.sampled AudioSystem AudioFormat
+            AudioFileFormat$Type AudioInputStream AudioFormat$Encoding]
+           [java.io ByteArrayInputStream]
+           [java.nio ByteBuffer]))
 
 (set! *warn-on-reflection* true)
 (set! *unchecked-math* :warn-on-boxed)
@@ -239,6 +244,7 @@
               :else v1)
              double))))))
 
+;; wavefile="test.wav" chan=0 ;; 0 is left, 1 is right etc. range is -1 to +1 v.
 (defn independent-source [[id n+ n- & [t & opts :as source]]]
   (let [t (if (string? t)
             (low-key t)
@@ -511,6 +517,41 @@
                           xs
                           (map #(report-node-voltage node number-of-nodes %) ys)))))))
 
+(def ^:dynamic *normalize-wave* true)
+
+;; .wave "test.wav" 16 48000 v(1,0) v(2,3)
+(defn write-wave [file sample-rate bits simulation-sample-rate & channels]
+  (let [number-of-channels (count channels)
+        number-of-samples (count (first channels))
+        max-sample (if *normalize-wave*
+                     (double (apply max (apply concat channels)))
+                     1.0)
+        normalize (fn [^double d]
+                    (max (min (/ d max-sample) 1.0) -1.0))
+        simulation-sample-rate (Math/round (double simulation-sample-rate))
+        out-format (AudioFormat. sample-rate bits number-of-channels true false)
+        in-format (AudioFormat. AudioFormat$Encoding/PCM_FLOAT
+                                simulation-sample-rate 64 number-of-channels
+                                (* number-of-channels 8) simulation-sample-rate true)
+        data (.array ^ByteBuffer (reduce (fn [^ByteBuffer b ds]
+                                           (doseq [^double d ds]
+                                             (doto b (.putDouble (normalize d))))
+                                           b)
+                                         (ByteBuffer/wrap (byte-array (* 8 number-of-samples number-of-channels)))
+                                         (apply map vector channels)))
+        in (AudioInputStream. (ByteArrayInputStream. data) in-format number-of-samples)]
+    (AudioSystem/write (AudioSystem/getAudioInputStream out-format in)
+                       AudioFileFormat$Type/WAVE (io/file (str (read-string file))))))
+
+(defn wave-result [{:keys [^long number-of-nodes netlist ^double time-step]} series series-type _]
+  (let [ys (map second series)]
+    (doseq [[_ file bits sample-rate & nodes] (-> netlist commands :.wave)
+            :let [nodes (report-nodes nodes)]
+            :when (seq nodes)]
+      (apply write-wave file sample-rate bits (/ time-step)
+             (for [node nodes]
+               (map #(report-node-voltage node number-of-nodes %) ys))))))
+
 (defn batch [{:keys [title netlist models] :as circuit}]
   (let [circuit (compile-circuit circuit)]
     (println title)
@@ -537,9 +578,9 @@
               :let [series (do (println "Transient Analysis" time-step simulation-time)
                                (time (doall (transient-analysis circuit time-step simulation-time dc-result))))
                     series (cond->> series
-                                    (number? start) (drop-while (fn [[^double t]] (< t (double start)))))]]
-        (print-result circuit series :tran "t")
-        (plot-result circuit series :tran "t")))))
+                                    (number? start) (drop-while (fn [[^double t]] (< t (double start)))))]
+              f [print-result plot-result wave-result]]
+        (f circuit series :tran "t")))))
 
 (defn spice
   ([circuit]
