@@ -271,9 +271,6 @@
     (code (let [ieq (- (* geq (voltage-diff x n+ n-)))]
             (source-current-stamp z n+ n- ieq)))))
 
-(defmethod stamp [:d :linear] [_ {:keys [a]} [_ anode cathode]]
-  (code (conductance-stamp a anode cathode 1e-12)))
-
 (defmethod stamp [:d :non-linear] [{:keys [models options]} {:keys [x a z]} [_ anode cathode model]]
   (let [defaults {:tnom (:tnom options) :is 1.0e-14}
         {:keys [^double is ^double tnom]} (merge defaults (models model))
@@ -375,6 +372,7 @@
    (let [a (zero-matrix number-of-rows number-of-rows)
          z (zero-matrix number-of-rows 1)]
      (linear-stamp! mna-stamp a z x)
+     (non-linear-stamp! mna-stamp a z x)
      (set-a-matrix! solver a)
      {:a a :z z :x (solve solver z)})))
 
