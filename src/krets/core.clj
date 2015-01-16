@@ -365,22 +365,6 @@
 
 ;; MNA Analysis
 
-(defn dc-operating-point
-  ([{:keys [^long number-of-rows] :as circuit}]
-   (dc-operating-point circuit (zero-matrix number-of-rows 1)))
-  ([{:keys [mna-stamp solver ^long number-of-rows]} x]
-   (let [a (zero-matrix number-of-rows number-of-rows)
-         z (zero-matrix number-of-rows 1)]
-     (linear-stamp! mna-stamp a z x)
-     (non-linear-stamp! mna-stamp a z x)
-     (set-a-matrix! solver a)
-     {:a a :z z :x (solve solver z)})))
-
-(defn dc-analysis [circuit source start stop step]
-  (for [v (concat (range start stop step) [stop])]
-    (binding [*voltage-sources* (assoc *voltage-sources* source v)]
-      [v (-> circuit dc-operating-point :x)])))
-
 (def ^:dynamic *newton-tolerance* 1e-8)
 (def ^:dynamic *newton-iterations* 500)
 
@@ -409,17 +393,33 @@
   (fn [a z _]
     (solve solver z)))
 
-(defn transient-step-fn [{:keys [non-linear?] :as circuit}]
+(defn step-fn [{:keys [non-linear?] :as circuit}]
   ((if non-linear?
      non-linear-step-fn
      linear-step-fn) circuit))
+
+(defn dc-operating-point
+  ([{:keys [^long number-of-rows] :as circuit}]
+   (dc-operating-point circuit (zero-matrix number-of-rows 1)))
+  ([{:keys [mna-stamp solver ^long number-of-rows] :as circuit} x]
+   (let [step (step-fn circuit)
+         a (zero-matrix number-of-rows number-of-rows)
+         z (zero-matrix number-of-rows 1)]
+     (linear-stamp! mna-stamp a z x)
+     (set-a-matrix! solver a)
+     {:a a :z z :x (step a z x)})))
+
+(defn dc-analysis [circuit source start stop step]
+  (for [v (concat (range start stop step) [stop])]
+    (binding [*voltage-sources* (assoc *voltage-sources* source v)]
+      [v (-> circuit dc-operating-point :x)])))
 
 (defn transient-analysis
   ([circuit ^double time-step ^double simulation-time]
    (transient-analysis circuit time-step simulation-time (dc-operating-point circuit)))
   ([{:keys [mna-stamp number-of-rows] :as circuit}
     ^double time-step ^double simulation-time {:keys [a x] z0 :z}]
-   (let [step (transient-step-fn circuit)
+   (let [step (step-fn circuit)
          end (+ simulation-time time-step)
          number-of-rows (long number-of-rows)]
      (loop [t 0.0 x x acc (transient []) z (zero-matrix number-of-rows 1)]
