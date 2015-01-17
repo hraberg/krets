@@ -32,9 +32,6 @@
 (definline zero-matrix [rows cols]
   `(DenseMatrix64F. ~rows ~cols))
 
-(definline row-count [m]
-  `(.numRows ~(mtag m)))
-
 (definline linear-solver [d]
   `(LinearSolverFactory/linear ~d))
 
@@ -42,23 +39,20 @@
   `(.setA ~(stag s) ~a))
 
 (definline solve [s b]
-  `(doto (zero-matrix (row-count ~b) 1)
+  `(doto (zero-matrix (.numRows ~(mtag b)) 1)
      (->> (.solve ~(stag s) ~b))))
-
-(definline add! [a b]
-  `(doto ~(mtag a) (-> (CommonOps/addEquals ~b))))
 
 (definline equals [a b epsilon]
   `(MatrixFeatures/isEquals ~(mtag a) ~b ~epsilon))
+
+(definline set-matrix! [a b]
+  `(doto ~(mtag a) (.set ~(mtag b))))
 
 (definline mget [m row col]
   `(.unsafe_get ~(mtag m) ~row ~col))
 
 (definline madd! [m row col v]
   `(.add ~(mtag m) ~row ~col ~v))
-
-(definline zero! [m]
-  `(doto ~(mtag m) .zero))
 
 ;; Netlist parser
 
@@ -414,19 +408,17 @@
         znl (zero-matrix number-of-rows 1)]
     (fn [a z x]
       (loop [xn-1 x
-             iters newton-iterations
-             anl (zero! anl)
-             znl (zero! znl)]
+             iters newton-iterations]
         (if (zero? iters)
           (throw (ex-info "Didn't converge." {:x xn-1}))
-          (let [anl (add! anl a)
-                znl (add! znl z)]
-            (non-linear-stamp! mna-stamp anl znl xn-1)
-            (set-a-matrix! solver anl)
-            (let [xn (solve solver znl)]
-              (if (equals xn xn-1 newton-tolerance)
-                xn
-                (recur xn (dec iters) (zero! anl) (zero! znl))))))))))
+          (do (set-matrix! anl a)
+              (set-matrix! znl z)
+              (non-linear-stamp! mna-stamp anl znl xn-1)
+              (set-a-matrix! solver anl)
+              (let [xn (solve solver znl)]
+                (if (equals xn xn-1 newton-tolerance)
+                  xn
+                  (recur xn (dec iters))))))))))
 
 (defn linear-step-fn [{:keys [solver]}]
   (fn [a z _]
@@ -461,18 +453,18 @@
     ^double time-step ^double simulation-time {:keys [a x] z0 :z}]
    (let [step (step-fn circuit)
          end (+ simulation-time time-step)
-         number-of-rows (long number-of-rows)]
+         number-of-rows (long number-of-rows)
+         z (zero-matrix number-of-rows 1)]
      (loop [t 0.0
             idx 0
             x x
-            acc (object-array (/ end time-step))
-            z (zero-matrix number-of-rows 1)]
+            acc (object-array (/ end time-step))]
        (if (> t end)
          acc
-         (do (add! z z0)
+         (do (set-matrix! z z0)
              (transient-stamp! mna-stamp z x t)
              (let [x (step a z x)]
-               (recur (+ t time-step) (inc idx) x (doto acc (aset idx [t x])) (zero! z)))))))))
+               (recur (+ t time-step) (inc idx) x (doto acc (aset idx [t x]))))))))))
 
 ;; Frontend
 
