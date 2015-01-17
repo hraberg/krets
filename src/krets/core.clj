@@ -30,7 +30,7 @@
   (with-meta s {:tag `LinearSolver}))
 
 (definline zero-matrix [rows cols]
-  `(DenseMatrix64F. ~rows ~cols))
+  `(DenseMatrix64F. (unchecked-int ~rows) (unchecked-int ~cols)))
 
 (definline linear-solver [d]
   `(LinearSolverFactory/linear ~d))
@@ -49,10 +49,10 @@
   `(doto ~(mtag a) (.set ~(mtag b))))
 
 (definline mget [m row col]
-  `(.unsafe_get ~(mtag m) ~row ~col))
+  `(.unsafe_get ~(mtag m) (unchecked-int ~row) (unchecked-int ~col)))
 
 (definline madd! [m row col v]
-  `(.add ~(mtag m) ~row ~col ~v))
+  `(.add ~(mtag m) (unchecked-int ~row) (unchecked-int ~col) ~v))
 
 ;; Netlist parser
 
