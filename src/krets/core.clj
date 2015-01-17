@@ -383,14 +383,14 @@
                  ;; cutoff
                  (<= vgs-vto 0.0) (do)
                  ;; saturation
-                 (<= vgs-vto vds) (do (aset-double id-gm-gds 0 (* b vgs-vto vgs-vto))
-                                      (aset-double id-gm-gds 1 (* b 2.0 vgs-vto))
-                                      (aset-double id-gm-gds 2 (* lambda beta vgs-vto vgs-vto)))
+                 (<= vgs-vto vds) (do (aset id-gm-gds (unchecked-int 0) (* b vgs-vto vgs-vto))
+                                      (aset id-gm-gds (unchecked-int 1) (* b 2.0 vgs-vto))
+                                      (aset id-gm-gds (unchecked-int 2) (* lambda beta vgs-vto vgs-vto)))
                  ;; linear
-                 :else (do (aset-double id-gm-gds 0 (* b vds (- (* 2.0 vgs-vto) vds)))
-                           (aset-double id-gm-gds 1 (* b 2.0 vds))
-                           (aset-double id-gm-gds 2 (+ (* b 2.0 (- vgs-vto vds))
-                                                       (* lambda beta vds (- (* 2.0 vgs-vto) vds)))))))
+                 :else (do (aset id-gm-gds (unchecked-int 0) (* b vds (- (* 2.0 vgs-vto) vds)))
+                           (aset id-gm-gds (unchecked-int 1) (* b 2.0 vds))
+                           (aset id-gm-gds (unchecked-int 2) (+ (* b 2.0 (- vgs-vto vds))
+                                                                (* lambda beta vds (- (* 2.0 vgs-vto) vds)))))))
               ;; inverse mode
               (let [vgd-vto (- vgd vto)
                     b (* beta (- 1.0 (* lambda vds)))]
@@ -398,18 +398,18 @@
                 (cond
                  (<= vgd-vto 0.0) (do)
                  ;; saturation
-                 (<= vgd-vto (- vds)) (do (aset-double id-gm-gds 0 (- (* b vgd-vto vgd-vto)))
-                                          (aset-double id-gm-gds 1 (- (* b 2.0 vgd-vto)))
-                                          (aset-double id-gm-gds 2 (+ (* lambda beta vgd-vto vgd-vto)
-                                                                      (* b 2.0 vgd-vto))))
+                 (<= vgd-vto (- vds)) (do (aset id-gm-gds (unchecked-int 0) (- (* b vgd-vto vgd-vto)))
+                                          (aset id-gm-gds (unchecked-int 1) (- (* b 2.0 vgd-vto)))
+                                          (aset id-gm-gds (unchecked-int 2) (+ (* lambda beta vgd-vto vgd-vto)
+                                                                               (* b 2.0 vgd-vto))))
                  ;; linear
-                 :else (do (aset-double id-gm-gds 0 (* b vds (- (* 2.0 vgd-vto) vds)))
-                           (aset-double id-gm-gds 1 (* b 2.0 vds))
-                           (aset-double id-gm-gds 2 (- (* b 2.0 vgd-vto)
-                                                       (* lambda beta vds (+ (* 2.0 vgd-vto) vds))))))))
-            (let [id (aget id-gm-gds 0)
-                  gm (aget id-gm-gds 1)
-                  gds (aget id-gm-gds 2)
+                 :else (do (aset id-gm-gds (unchecked-int 0) (* b vds (- (* 2.0 vgd-vto) vds)))
+                           (aset id-gm-gds (unchecked-int 1) (* b 2.0 vds))
+                           (aset id-gm-gds (unchecked-int 2) (- (* b 2.0 vgd-vto)
+                                                                (* lambda beta vds (+ (* 2.0 vgd-vto) vds))))))))
+            (let [id (aget id-gm-gds (unchecked-int 0))
+                  gm (aget id-gm-gds (unchecked-int 1))
+                  gds (aget id-gm-gds (unchecked-int 2))
                   igseq (- igs (* ggs vgs))
                   igdeq (- igd (* ggd vgd))
                   idseq (- gm (* gm vgs) (* gds vds))]
