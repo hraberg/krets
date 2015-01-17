@@ -449,9 +449,10 @@
      {:a a :z z :x (step a z x)})))
 
 (defn dc-analysis [circuit source start stop step]
-  (for [v (concat (range start stop step) [stop])]
-    (binding [*voltage-sources* (assoc *voltage-sources* source v)]
-      [v (-> circuit dc-operating-point :x)])))
+  (doall
+   (for [v (concat (range start stop step) [stop])]
+     (binding [*voltage-sources* (assoc *voltage-sources* source v)]
+       [v (-> circuit dc-operating-point :x)]))))
 
 (defn transient-analysis
   ([circuit ^double time-step ^double simulation-time]
@@ -461,13 +462,17 @@
    (let [step (step-fn circuit)
          end (+ simulation-time time-step)
          number-of-rows (long number-of-rows)]
-     (loop [t 0.0 x x acc (transient []) z (zero-matrix number-of-rows 1)]
+     (loop [t 0.0
+            idx 0
+            x x
+            acc (object-array (/ end time-step))
+            z (zero-matrix number-of-rows 1)]
        (if (> t end)
-         (persistent! acc)
+         acc
          (do (add! z z0)
              (transient-stamp! mna-stamp z x t)
              (let [x (step a z x)]
-               (recur (+ t time-step) x (conj! acc [t x]) (zero! z)))))))))
+               (recur (+ t time-step) (inc idx) x (doto acc (aset idx [t x])) (zero! z)))))))))
 
 ;; Frontend
 
@@ -610,12 +615,12 @@
       (println)
       (doseq [[_ source start stop step] (:.dc (commands netlist))
               :let [sweep (do (println  "DC Analysis")
-                              (time (doall (dc-analysis circuit source start stop step))))]]
+                              (time (dc-analysis circuit source start stop step)))]]
         (print-result circuit sweep :dc source)
         (plot-result circuit sweep :dc source))
       (doseq [[_ time-step simulation-time start] (:.tran (commands netlist))
               :let [series (do (println "Transient Analysis" time-step simulation-time)
-                               (time (doall (transient-analysis circuit time-step simulation-time dc-result))))
+                               (time (transient-analysis circuit time-step simulation-time dc-result)))
                     series (cond->> series
                                     (number? start) (drop-while (fn [[^double t]] (< t (double start)))))]
               f [print-result plot-result wave-result]]
