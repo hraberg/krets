@@ -190,20 +190,13 @@
      (ground? n-) (term n+)
      :else `(- ~(term n+) ~(term n-)))))
 
-(defmacro safe-exp [x]
-  (let [limit 70.0
-        limit-exp (Math/exp limit)]
-    `(if (< ~x ~limit)
-       (Math/exp ~x)
-       (+ ~limit-exp (+ 1.0 (- ~x ~limit))))))
-
 (defn temprature-voltage ^double [^double t]
   (let [zero-kelvin -273.15
         boltzmann 8.6173e-5]
     (* (- t zero-kelvin) boltzmann)))
 
 (defmacro diode-current [is vd vt]
-  `(* ~is (- (safe-exp (/ ~vd ~vt)) 1.0)))
+  `(* ~is (- (Math/exp (/ ~vd ~vt)) 1.0)))
 
 (defmacro diode-conductance [is id vt]
   `(/ (+ ~id ~is) ~vt))
