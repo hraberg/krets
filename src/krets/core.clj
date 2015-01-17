@@ -123,11 +123,9 @@
 
 (defn models [netlist]
   (->> (for [[_ n t & kvs] (:.model (commands netlist))]
-         {n (with-meta
-              (->> (for [[k v] (partition 2 kvs)]
-                     [(low-key k) v])
-                   (into {}))
-              {:element-type (low-key t) :name n})})
+         {n (->> (for [[k v] (partition 2 kvs)]
+                   [(low-key k) v])
+                 (into {:model-type (low-key t)}))})
        (apply merge)))
 
 (defn time-step [netlist]
@@ -320,6 +318,14 @@
                 ieq (- id (* geq vd))]
             (conductance-stamp a anode cathode geq)
             (source-current-stamp z anode cathode ieq)))))
+
+(defmethod stamp [:j :non-linear] [{:keys [models options]} {:keys [x a z]} [_ nd ng ns model]]
+  (let [defaults {:tnom (:tnom options) :is 1.0e-14 :vto -2.0 :beta 1.0e-3 :lambda 1.0e-3}
+        {:keys [^double is ^double tnom model-type]} (merge defaults (models model))]))
+
+(defmethod stamp [:q :non-linear] [{:keys [models options]} {:keys [x a z]} [_ nc nb ne model]]
+  (let [defaults {:tnom (:tnom options) :is 1.0e-16 :bf 100.0 :ne 1.5 :nc 2.0}
+        {:keys [^double is ^double tnom model-type]} (merge defaults (models model))]))
 
 (def ^:dynamic *voltage-sources* {})
 
