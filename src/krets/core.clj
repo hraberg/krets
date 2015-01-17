@@ -231,7 +231,9 @@
   (let [ks (vec (keys &env))]
     `(cons 'do (->> '~body (w/postwalk-replace (zipmap '~ks ~ks))))))
 
-(defn sin-source [_ [vo va ^double freq td thet]]
+(defmulti transient-source (fn [type circuit opts] type))
+
+(defmethod transient-source :sin [_ _ [vo va ^double freq td thet]]
   (fn [t]
     (let [td (or td 0.0)
           thet (double (or thet 0.0))
@@ -245,7 +247,7 @@
                          (Math/exp (- (/ (- t td) thet))))
                     (Math/sin (* freq-2-pi (+ t td)))))))))))
 
-(defn pulse-source [_ [^double v1 ^double v2 td ^double tr ^double tf ^double pw per]]
+(defmethod transient-source :pulse [_ _ [^double v1 ^double v2 td ^double tr ^double tf ^double pw per]]
   (fn [t]
     (let [td (double (or td 0.0))
           pw-end (+ tr pw)
@@ -264,7 +266,7 @@
 (def ^:dynamic *wave-table* (atom {}))
 
 ;; wavefile="test.wav" chan=0 ;; 0 is left, 1 is right etc. range is -1 to +1 v.
-(defn wavefile-source [{:keys [^double time-step] :as circuit} [file _ ^double chan]]
+(defmethod transient-source :wavefile [_ {:keys [^double time-step] :as circuit} [file _ ^double chan]]
   (fn [t]
     (let [simulation-sample-rate (/ time-step)
           filename (str (read-string file))
@@ -293,14 +295,10 @@
 (defn independent-source [circuit [id n+ n- & [t & opts :as source]]]
   (let [t (if (string? t)
             (low-key t)
-            :dc)
-        dc (or (first (filter number? source)) 0.0)
-        f ((case t
-             :dc (constantly (constantly dc))
-             :sin sin-source
-             :pulse pulse-source
-             :wavefile wavefile-source) circuit opts)]
-    {:dc dc :type t :transient f}))
+            :dc)]
+    (if (= :dc t)
+      {:dc (or (first (filter number? source)) 0.0)}
+      {:transient (transient-source t circuit opts)})))
 
 (defmulti stamp (fn [circuit {:keys [type] :as env} e] [(element-type e) type]))
 
@@ -333,19 +331,18 @@
 
 (defmethod stamp [:v :linear] [{:keys [voltage-source->index netlist] :as circuit} {:keys [a z]} [id n+ n- :as e]]
   (let [dc-sweep? ((low-key id) (-> netlist commands :.dc sub-commands))
-        {:keys [dc type]} (independent-source circuit e)
+        {:keys [dc]} (independent-source circuit e)
         idx (voltage-source->index id)]
     (code (cond
            dc-sweep? (stamp-matrix z idx 1 (double (*voltage-sources* id dc)))
-           (= :dc type) (stamp-matrix z idx 1 dc))
+           dc (stamp-matrix z idx 1 dc))
           (conductance-voltage-stamp a n+ n- idx))))
 
 (defmethod stamp [:v :transient] [{:keys [voltage-source->index] :as circuit} {:keys [z t]} [id :as e]]
-  (let [{:keys [transient type]} (independent-source circuit e)
-        idx (voltage-source->index id)
-        transient (transient t)]
-    (when-not (= :dc type)
-      (code (stamp-matrix z idx 1 transient)))))
+  (let [{:keys [transient]} (independent-source circuit e)
+        idx (voltage-source->index id)]
+    (when-let [source (and transient (transient t))]
+      (code (stamp-matrix z idx 1 source)))))
 
 (defmethod stamp [:e :linear] [{:keys [voltage-source->index]} {:keys [a]}
                                        [id ^long out+ ^long out- ^long in+ ^long in- ^double gain]]
@@ -355,15 +352,14 @@
           (stamp-matrix a idx in- (- gain)))))
 
 (defmethod stamp [:i :linear] [circuit {:keys [z]} [_ n+ n- :as e]]
-  (let [{:keys [^double dc type]} (independent-source circuit e)]
-    (when (= :dc type)
+  (let [{:keys [dc]} (independent-source circuit e)]
+    (when dc
       (code (source-current-stamp z n+ n- dc)))))
 
 (defmethod stamp [:i :transient] [circuit {:keys [z t]} [_ n+ n- :as e]]
-  (let [{:keys [transient type]} (independent-source circuit e)
-        transient (transient t)]
-    (when-not (= :dc type)
-      (code (source-current-stamp z n+ n- transient)))))
+  (let [{:keys [transient]} (independent-source circuit e)]
+    (when-let [source (and transient (transient t))]
+      (code (source-current-stamp z n+ n- source)))))
 
 ;; All About Circuits model ideal op amps as a vcvs.
 (defn opamp->e [[id ^long in+ ^long in- ^long out+]]
