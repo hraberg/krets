@@ -92,13 +92,16 @@
 (def ground? zero?)
 
 (defn number-of-voltage-sources ^long [netlist]
-  (count (mapcat netlist [:v :e :u])))
+  (count (mapcat netlist [:v :e :opamp])))
 
-(defn element-type [[[c]]]
-  (low-key c))
+(defn element-type [[[t] & nodes]]
+  (let [et (low-key t)]
+    (if (= :x et)
+      (low-key (first (filter string? nodes)))
+      et)))
 
 (defn element-nodes [[_ & nodes :as e]]
-  (take ({:e 4 :u 3} (element-type e) 2) nodes))
+  (take ({:e 4 :opamp 3} (element-type e) 2) nodes))
 
 (defn number-of-nodes ^long [netlist]
   (->> (dissoc netlist :.)
@@ -115,7 +118,7 @@
 
 (defn voltage-source->index [netlist]
   (let [number-of-nodes (number-of-nodes netlist)]
-    (into {} (for [[^long idx [id]] (map-indexed vector (mapcat netlist [:v :e :u]))]
+    (into {} (for [[^long idx [id]] (map-indexed vector (mapcat netlist [:v :e :opamp]))]
                [id (inc (+ number-of-nodes idx))]))))
 
 (defn commands [netlist]
@@ -144,7 +147,7 @@
        (apply merge {:tnom 27.0})))
 
 (defn non-linear? [netlist]
-  (boolean (some netlist [:d :u])))
+  (boolean (some netlist [:d :opamp])))
 
 (defn elements [netlist]
   (mapcat val (dissoc netlist :.)))
@@ -349,17 +352,17 @@
       (code (source-current-stamp z n+ n- transient)))))
 
 ;; All About Circuits model ideal op amps as a vcvs.
-(defn u->e [[id ^long in+ ^long in- ^long out+]]
+(defn opamp->e [[id ^long in+ ^long in- ^long out+]]
   [(str "e" id) out+ 0 in+ in- 999e3])
 
-(defmethod stamp [:u :linear] [{:keys [voltage-source->index]} {:keys [a]}
-                                       [id ^long in+ ^long in- ^long out+]]
+(defmethod stamp [:opamp :linear] [{:keys [voltage-source->index]} {:keys [a]}
+                                   [id ^long in+ ^long in- ^long out+]]
   (let [idx (voltage-source->index id)]
     (code (stamp-matrix a idx out+ -1.0)
           (stamp-matrix a out+ idx 1.0))))
 
-(defmethod stamp [:u :non-linear] [{:keys [voltage-source->index]} {:keys [a z x]}
-                                          [id ^long in+ ^long in- ^long out+]]
+(defmethod stamp [:opamp :non-linear] [{:keys [voltage-source->index]} {:keys [a z x]}
+                                       [id ^long in+ ^long in- ^long out+]]
   (let [idx (voltage-source->index id)
         gain 1e6
         vmax 15

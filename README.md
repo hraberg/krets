@@ -6,7 +6,7 @@ During 1996-97 I was writing a [Nord Lead clone in C++](http://www.student.nada.
 
 The goal here is real-time circuit modelling of an analog synthesizer. A mildly realistic target is the [Music From Outer Space Noise Toaster](http://www.musicfromouterspace.com/analogsynth_new/NOISETOASTER/NOISETOASTER.php) which is the subject of Ray Wilson's book [Make: Analog Synthesizers](http://www.makershed.com/products/make-analog-synthesizers) A first step towards that is the [Alien Screamer](http://www.musicfromouterspace.com/analogsynth_new/ALIENSCREAMER/ALIENSCREAMER.php). This repository is very far from that goal though! I expect to ditch Clojure for some other language - Rust, Nim or C - once (and if) I figure out how it's supposed to work.
 
-To achieve this we need to be able to simulate `V` voltage sources , `I` current sources, `E` voltage controlled voltage sources, `R` resistors, `C` capacitors, `U` op amps, `D` diodes, `Q` bipolar junction transistors and `J` junction gate field-effect transistors. Preferably in real-time. There's no intention (or enough knowledge) to build a full-fledged general purpose circuit simulator.
+To achieve this we need to be able to simulate `V` voltage sources , `I` current sources, `E` voltage controlled voltage sources, `R` resistors, `C` capacitors, `D` diodes, `Q` bipolar junction transistors, `J` junction gate field-effect transistors and `X` for simple sub circuits like op amps and potentiometers. Preferably in real-time. There's no intention (or enough knowledge) to build a full-fledged general purpose circuit simulator.
 
 The industry standard circuit simulator is called Spice. 'Krets' is Swedish for circuit.
 
