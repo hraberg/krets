@@ -197,7 +197,7 @@
        (Math/exp ~x)
        (+ ~limit-exp (+ 1.0 (- ~x ~limit))))))
 
-(defn temprature-voltage [^double t]
+(defn temprature-voltage ^double [^double t]
   (let [zero-kelvin -273.15
         boltzmann 8.6173e-5]
     (* (- t zero-kelvin) boltzmann)))
@@ -426,13 +426,10 @@
                   (stamp-matrix a ns nd (- gds))
                   (stamp-matrix a ns ns (+ ggs gds gm)))))))))
 
-(defmethod stamp [:q :non-linear] [{:keys [models options]} {:keys [x a z]} [_ nc nb ne model]]
-  (let [defaults {:tnom (:tnom options) :is 1.0e-16
-                  :bf 100.0 :br 1.0 :ne 1.5 :nc 2.0
-                  :vaf Double/POSITIVE_INFINITY :var Double/POSITIVE_INFINITY
-                  :ikf Double/POSITIVE_INFINITY :ikr Double/POSITIVE_INFINITY}
-        {:keys [^double is ^double tnom ^double bf ^double br
-                ^double vaf ^double var ^double ikf ^double ikr model-type]} (merge defaults (models model))
+(defmethod stamp [:q :non-linear] [{:keys [models options]} {:keys [x a z]} [_ nc nb ne model-or-ns model :as e]]
+  (let [model (first (filter string? [model-or-ns model]))
+        defaults {:tnom (:tnom options) :is 1.0e-16 :bf 100.0 :br 1.0}
+        {:keys [^double is ^double tnom ^double bf ^double br model-type]} (merge defaults (models model))
         vt (temprature-voltage tnom)
         pol (case model-type
               :npn 1.0
@@ -440,29 +437,21 @@
     (code (let [vbe (* (voltage-diff x nb ne) pol)
                 if (diode-current is vbe vt)
                 gif (diode-conductance is if vt)
-                gbe (/ gif bf) ;; gπ
+                gbe (/ gif bf)
                 ibe (/ if bf)
                 vbc (* (voltage-diff x nb nc) pol)
                 ir (diode-current is vbc vt)
                 gir (diode-conductance is ir vt)
-                gbc (/ gir br) ;; gμ
+                gbc (/ gir br)
                 ibc (/ ir br)
-                vce (- vbe vbc)
-                ib (+ ibe ibc)
-                q1 (/ 1.0 (- 1.0 (/ vbc vaf) (/ vbe var)))
-                q2 (+ (/ if ikf) (/ ir ikr))
-                sqrt (Math/sqrt (+ 1.0 (* 4.0 q2)))
-                qb (* (/ q1 2) (+ 1.0 sqrt))
-                it (/ (- if ir) qb)
-                dqb-dvbe (* q1 (+ (/ qb var) (/ gif (* ikf sqrt))))
-                dqb-dvbc (* q1 (+ (/ qb vaf) (/ gir (* ikr sqrt))))
-                gmf (/ (- gif (* it dqb-dvbe)) qb) ;; gitf
-                gmr (/ (- (* it dqb-dvbc) gir) qb) ;; gitr
+                it (- if ir)
+                gmf gif
+                gmr (- gir)
                 ibeeq (- ibe (* gbe vbe))
                 ibceq (- ibc (* gbc vbc))
-                iceeq (- it (* gmf vbe) (* gmr vbc))]
+                iceeq (- it (+ (* gmf vbe) (* gmr vbc)))]
             (stamp-matrix z nb 1 (* (- (- ibeeq) ibceq) pol))
-            (stamp-matrix z nc 1 (* (+ ibceq iceeq) pol))
+            (stamp-matrix z nc 1 (* (- ibceq iceeq) pol))
             (stamp-matrix z ne 1 (* (+ ibeeq iceeq) pol))
             (stamp-matrix a nb nb (+ gbc gbe))
             (stamp-matrix a nb nc (- gbc))
@@ -563,10 +552,12 @@
      {:a a :z z :x (step a z x)})))
 
 (defn dc-analysis [circuit source start stop step]
-  (doall
-   (for [v (concat (range start stop step) [stop])]
-     (binding [*voltage-sources* (assoc *voltage-sources* source v)]
-       [v (-> circuit dc-operating-point :x)]))))
+  (reduce (fn [acc v]
+            (binding [*voltage-sources* (assoc *voltage-sources* source v)]
+              (conj acc [v (:x (if-let [x (second (last acc))]
+                                 (dc-operating-point circuit x)
+                                 (dc-operating-point circuit)))])))
+          [] (concat (range start stop step) [stop])))
 
 (defn transient-analysis
   ([circuit ^double time-step ^double simulation-time]

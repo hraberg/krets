@@ -31,3 +31,6 @@
 
 (deftest micro-bench-common-source-jfet-amplifier
   (micro-bench "test/krets/common-source-jfet-amplifier.cir"))
+
+(deftest micro-bench-common-base-bjt-amplifier
+  (micro-bench "test/krets/common-base-bjt-amplifier.cir"))
