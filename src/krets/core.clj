@@ -397,8 +397,8 @@
                   ;; inverse mode
                   (let [vgd-vto (- vgd vto)
                         b (* beta (- 1.0 (* lambda vds)))]
-                    ;; cutoff
                     (cond
+                     ;; cutoff
                      (<= vgd-vto 0.0) (recur 0.0 0.0 0.0)
                      ;; saturation
                      (<= vgd-vto (- vds)) (recur (- (* b vgd-vto vgd-vto))
