@@ -214,7 +214,7 @@
   (let [ks (vec (keys &env))]
     `(cons 'do (->> '~body (w/postwalk-replace (zipmap '~ks ~ks))))))
 
-(defn sin-source [[vo va ^double freq td thet]]
+(defn sin-source [_ [vo va ^double freq td thet]]
   (fn [t]
     (let [td (or td 0.0)
           thet (double (or thet 0.0))
@@ -228,7 +228,7 @@
                          (Math/exp (- (/ (- t td) thet))))
                     (Math/sin (* freq-2-pi (+ t td)))))))))))
 
-(defn pulse-source [[^double v1 ^double v2 td ^double tr ^double tf ^double pw per]]
+(defn pulse-source [_ [^double v1 ^double v2 td ^double tr ^double tf ^double pw per]]
   (fn [t]
     (let [td (double (or td 0.0))
           pw-end (+ tr pw)
@@ -244,16 +244,45 @@
               :else v1)
              double))))))
 
+(def ^:dynamic *wavefiles* (atom {}))
+
 ;; wavefile="test.wav" chan=0 ;; 0 is left, 1 is right etc. range is -1 to +1 v.
-(defn independent-source [[id n+ n- & [t & opts :as source]]]
+(defn wavefile-source [{:keys [^double time-step] :as circuit} [file _ ^double chan]]
+  (fn [t]
+    (let [simulation-sample-rate (/ time-step)
+          filename (str (read-string file))
+          f (io/file filename)
+          netlist-file (-> circuit meta :netlist-file)
+          f (if (and (not (.exists f)) (not (.isAbsolute f)) netlist-file)
+              (io/file (.getParent (io/file netlist-file)) filename)
+              f)
+          file-size (.length f)
+          in (AudioSystem/getAudioInputStream (io/input-stream f))
+          number-of-channels (-> in .getFormat .getChannels)
+          out-format (AudioFormat. AudioFormat$Encoding/PCM_FLOAT
+                                   simulation-sample-rate 64 number-of-channels
+                                   (* number-of-channels 8) simulation-sample-rate true)
+          out (AudioSystem/getAudioInputStream out-format in)]
+      (.mark out file-size)
+      (swap! *wavefiles* assoc file out)
+      (code (let [w (@*wavefiles* file)]
+              (when (zero? (double t))
+                (try (.reset w) (catch Exception e (println e)))
+                (.mark w file-size))
+              (let [bs (byte-array (* number-of-channels 8))]
+                (.read w bs)
+                (.getDouble (ByteBuffer/wrap bs) chan)))))))
+
+(defn independent-source [circuit [id n+ n- & [t & opts :as source]]]
   (let [t (if (string? t)
             (low-key t)
             :dc)
         dc (or (first (filter number? source)) 0.0)
-        f (case t
-            :dc (constantly dc)
-            :sin (sin-source opts)
-            :pulse (pulse-source opts))]
+        f ((case t
+             :dc (constantly (constantly dc))
+             :sin sin-source
+             :pulse pulse-source
+             :wavefile wavefile-source) circuit opts)]
     {:dc dc :type t :transient f}))
 
 (defmulti stamp (fn [circuit {:keys [type] :as env} e] [(element-type e) type]))
@@ -285,17 +314,17 @@
 
 (def ^:dynamic *voltage-sources* {})
 
-(defmethod stamp [:v :linear] [{:keys [voltage-source->index netlist]} {:keys [a z]} [id n+ n- :as e]]
+(defmethod stamp [:v :linear] [{:keys [voltage-source->index netlist] :as circuit} {:keys [a z]} [id n+ n- :as e]]
   (let [dc-sweep? ((low-key id) (-> netlist commands :.dc sub-commands))
-        {:keys [dc type]} (independent-source e)
+        {:keys [dc type]} (independent-source circuit e)
         idx (voltage-source->index id)]
     (code (cond
            dc-sweep? (stamp-matrix z idx 1 (double (*voltage-sources* id dc)))
            (= :dc type) (stamp-matrix z idx 1 dc))
           (conductance-voltage-stamp a n+ n- idx))))
 
-(defmethod stamp [:v :transient] [{:keys [voltage-source->index]} {:keys [z t]} [id :as e]]
-  (let [{:keys [transient type]} (independent-source e)
+(defmethod stamp [:v :transient] [{:keys [voltage-source->index] :as circuit} {:keys [z t]} [id :as e]]
+  (let [{:keys [transient type]} (independent-source circuit e)
         idx (voltage-source->index id)
         transient (transient t)]
     (when-not (= :dc type)
@@ -308,13 +337,13 @@
           (stamp-matrix a idx in+ gain)
           (stamp-matrix a idx in- (- gain)))))
 
-(defmethod stamp [:i :linear] [_ {:keys [z]} [_ n+ n- :as e]]
-  (let [{:keys [^double dc type]} (independent-source e)]
+(defmethod stamp [:i :linear] [circuit {:keys [z]} [_ n+ n- :as e]]
+  (let [{:keys [^double dc type]} (independent-source circuit e)]
     (when (= :dc type)
       (code (source-current-stamp z n+ n- dc)))))
 
-(defmethod stamp [:i :transient] [_ {:keys [z t]} [_ n+ n- :as e]]
-  (let [{:keys [transient type]} (independent-source e)
+(defmethod stamp [:i :transient] [circuit {:keys [z t]} [_ n+ n- :as e]]
+  (let [{:keys [transient type]} (independent-source circuit e)
         transient (transient t)]
     (when-not (= :dc type)
       (code (source-current-stamp z n+ n- transient)))))
@@ -591,7 +620,7 @@
         (println err)))))
 
 (defn process-file [f]
-  (-> f slurp parse-netlist batch))
+  (-> f slurp parse-netlist (with-meta {:netlist-file f}) batch))
 
 (defn -main [& [f]]
   (if f
