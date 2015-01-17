@@ -152,6 +152,19 @@
 (defn elements [netlist]
   (mapcat val (dissoc netlist :.)))
 
+(defn node-ids [netlist]
+  (let [{ns true ss false} (group-by number? (mapcat element-nodes (elements netlist)))]
+    (merge (zipmap ns ns) (zipmap (set ss) (remove (conj (set ns) 0.0) (map double (range)))))))
+
+(defn reassign-element-nodes [id-map [id & data :as e]]
+  (let [[nodes data] (split-at (count (element-nodes e)) data)]
+    (vec (concat [id] (replace id-map nodes) data))))
+
+(defn ensure-seqential-numeric-nodes [netlist]
+  (let [ids (node-ids netlist)
+        es (elements netlist)]
+    (w/postwalk-replace (zipmap es (map (partial reassign-element-nodes ids) es)) netlist)))
+
 (defn circuit-info [{:keys [options] :as circuit}]
   (dissoc circuit :netlist :title :mna-stamp :voltage-source->index :solver :models :options))
 
@@ -163,7 +176,8 @@
                             (remove (some-fn (re? #"^\*") (re? #"(?i)^.end$")))
                             (map #(s/split % #"[\s=,()]+"))
                             (w/postwalk (some-fn spice-number identity))
-                            (group-by element-type))]
+                            (group-by element-type)
+                            ensure-seqential-numeric-nodes)]
     (apply merge (with-meta {:netlist parsed-netlist :title title} {:netlist-source netlist-source})
            (for [k '[number-of-nodes number-of-voltage-sources number-of-rows
                      time-step models non-linear? voltage-source->index options]]
