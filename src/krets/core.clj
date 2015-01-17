@@ -190,6 +190,21 @@
      (ground? n-) (term n+)
      :else `(- ~(term n+) ~(term n-)))))
 
+(defmacro safe-exp [x]
+  (let [limit 70.0
+        limit-exp (Math/exp limit)]
+    `(if (< ~x ~limit)
+       (Math/exp ~x)
+       (+ ~limit-exp (+ 1.0 (- ~x ~limit))))))
+
+(defn temprature-voltage [^double t]
+  (let [zero-kelvin -273.15
+        boltzmann 8.6173e-5]
+    (* (- t zero-kelvin) boltzmann)))
+
+(defmacro diode-current [is vd vt]
+  `(* ~is (- (safe-exp (/ ~vd ~vt)) 1.0)))
+
 ;; takes 1 based indexes, 0 is ground.
 (defmacro stamp-matrix [m row col v]
   (when-not (or (ground? row) (ground? col))
@@ -211,13 +226,6 @@
   `(let [i# ~i]
      (stamp-matrix ~z ~n+ 1 (- i#))
      (stamp-matrix ~z ~n- 1 i#)))
-
-(defmacro safe-exp [x]
-  (let [limit 70.0
-        limit-exp (Math/exp limit)]
-    `(if (< ~x ~limit)
-       (Math/exp ~x)
-       (+ ~limit-exp (+ 1.0 (- ~x ~limit))))))
 
 (defmacro code [& body]
   (let [ks (vec (keys &env))]
@@ -307,26 +315,6 @@
     (code (let [ieq (- (* geq (voltage-diff x n+ n-)))]
             (source-current-stamp z n+ n- ieq)))))
 
-(defmethod stamp [:d :non-linear] [{:keys [models options]} {:keys [x a z]} [_ anode cathode model]]
-  (let [defaults {:tnom (:tnom options) :is 1.0e-14}
-        {:keys [^double is ^double tnom]} (merge defaults (models model))
-        vt (* (- tnom -273.15) 8.6173e-5)]
-    (code (let [vd (voltage-diff x anode cathode)
-                exp-vd-by-vt (safe-exp (/ vd vt))
-                id (* is (- exp-vd-by-vt 1.0))
-                geq (* (/ is vt) exp-vd-by-vt)
-                ieq (- id (* geq vd))]
-            (conductance-stamp a anode cathode geq)
-            (source-current-stamp z anode cathode ieq)))))
-
-(defmethod stamp [:j :non-linear] [{:keys [models options]} {:keys [x a z]} [_ nd ng ns model]]
-  (let [defaults {:tnom (:tnom options) :is 1.0e-14 :vto -2.0 :beta 1.0e-3 :lambda 1.0e-3}
-        {:keys [^double is ^double tnom model-type]} (merge defaults (models model))]))
-
-(defmethod stamp [:q :non-linear] [{:keys [models options]} {:keys [x a z]} [_ nc nb ne model]]
-  (let [defaults {:tnom (:tnom options) :is 1.0e-16 :bf 100.0 :ne 1.5 :nc 2.0}
-        {:keys [^double is ^double tnom model-type]} (merge defaults (models model))]))
-
 (def ^:dynamic *voltage-sources* {})
 
 (defmethod stamp [:v :linear] [{:keys [voltage-source->index netlist] :as circuit} {:keys [a z] :as env} [id n+ n- :as e]]
@@ -357,6 +345,25 @@
 (defmethod stamp [:i :transient] [circuit {:keys [z] :as env} [_ n+ n- :as e]]
   (when-let [source (independent-source circuit env e)]
     (code (source-current-stamp z n+ n- source))))
+
+(defmethod stamp [:d :non-linear] [{:keys [models options]} {:keys [x a z]} [_ anode cathode model]]
+  (let [defaults {:tnom (:tnom options) :is 1.0e-14}
+        {:keys [^double is ^double tnom]} (merge defaults (models model))
+        vt (temprature-voltage tnom)]
+    (code (let [vd (voltage-diff x anode cathode)
+                id (diode-current is vd vt)
+                geq (/ (+ id is) vt)
+                ieq (- id (* geq vd))]
+            (conductance-stamp a anode cathode geq)
+            (source-current-stamp z anode cathode ieq)))))
+
+(defmethod stamp [:j :non-linear] [{:keys [models options]} {:keys [x a z]} [_ nd ng ns model]]
+  (let [defaults {:tnom (:tnom options) :is 1.0e-14 :vto -2.0 :beta 1.0e-3 :lambda 1.0e-3}
+        {:keys [^double is ^double tnom model-type]} (merge defaults (models model))]))
+
+(defmethod stamp [:q :non-linear] [{:keys [models options]} {:keys [x a z]} [_ nc nb ne model]]
+  (let [defaults {:tnom (:tnom options) :is 1.0e-16 :bf 100.0 :ne 1.5 :nc 2.0}
+        {:keys [^double is ^double tnom model-type]} (merge defaults (models model))]))
 
 ;; All About Circuits model ideal op amps as a vcvs.
 (defn opamp->e [[id ^long in+ ^long in- ^long out+]]
