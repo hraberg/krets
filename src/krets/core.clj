@@ -535,22 +535,28 @@
 
 (defn dc-operating-point
   ([{:keys [^long number-of-rows] :as circuit}]
-   (dc-operating-point circuit (zero-matrix number-of-rows 1)))
-  ([{:keys [mna-stamp solver ^long number-of-rows] :as circuit} x]
-   (let [step (step-fn circuit)
-         a (zero-matrix number-of-rows number-of-rows)
+   (dc-operating-point circuit (step-fn circuit) (zero-matrix number-of-rows 1)))
+  ([{:keys [mna-stamp solver ^long number-of-rows] :as circuit} step x]
+   (let [a (zero-matrix number-of-rows number-of-rows)
          z (zero-matrix number-of-rows 1)]
      (linear-stamp! mna-stamp a z x)
      (set-a-matrix! solver a)
      {:a a :z z :x (step a z x)})))
 
-(defn dc-analysis [circuit source start stop step]
-  (reduce (fn [acc v]
-            (binding [*voltage-sources* (assoc *voltage-sources* source v)]
-              (conj acc [v (:x (if-let [x (second (last acc))]
-                                 (dc-operating-point circuit x)
-                                 (dc-operating-point circuit)))])))
-          [] (concat (range start stop step) [stop])))
+(defn dc-analysis [{:keys [^long number-of-rows] :as circuit} source start stop step]
+  (let [step-fn (step-fn circuit)
+        start (double start)
+        stop (double stop)
+        step (double step)]
+    (loop [v start
+           idx 0
+           x (zero-matrix number-of-rows 1)
+           acc (object-array (long (inc (/ (- stop start) step))))]
+      (if (> v stop)
+        acc
+        (let [x (binding [*voltage-sources* (assoc *voltage-sources* source v)]
+                  (:x (dc-operating-point circuit step-fn x)))]
+          (recur (+ v step) (inc idx) x (doto acc (aset idx [v x]))))))))
 
 (defn transient-analysis
   ([circuit ^double time-step ^double simulation-time]
