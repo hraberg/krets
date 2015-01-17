@@ -205,6 +205,9 @@
 (defmacro diode-current [is vd vt]
   `(* ~is (- (safe-exp (/ ~vd ~vt)) 1.0)))
 
+(defmacro diode-conductance [is id vt]
+  `(/ (+ ~id ~is) ~vt))
+
 ;; takes 1 based indexes, 0 is ground.
 (defmacro stamp-matrix [m row col v]
   (when-not (or (ground? row) (ground? col))
@@ -352,14 +355,76 @@
         vt (temprature-voltage tnom)]
     (code (let [vd (voltage-diff x anode cathode)
                 id (diode-current is vd vt)
-                geq (/ (+ id is) vt)
+                geq (diode-conductance is id vt)
                 ieq (- id (* geq vd))]
             (conductance-stamp a anode cathode geq)
             (source-current-stamp z anode cathode ieq)))))
 
 (defmethod stamp [:j :non-linear] [{:keys [models options]} {:keys [x a z]} [_ nd ng ns model]]
-  (let [defaults {:tnom (:tnom options) :is 1.0e-14 :vto -2.0 :beta 1.0e-3 :lambda 1.0e-3}
-        {:keys [^double is ^double tnom model-type]} (merge defaults (models model))]))
+  (let [defaults {:tnom (:tnom options) :is 1.0e-14 :vto -2.0 :beta 1.0e-4 :lambda 0.0}
+        {:keys [^double is ^double tnom model-type ^double vto ^double beta ^double lambda]} (merge defaults (models model))
+        vt (temprature-voltage tnom)
+        pol (case model-type
+              :njf 1.0
+              :pjf -1.0)]
+    (code (let [vgs (* (voltage-diff x ng ns) pol)
+                igs (diode-current is vgs vt)
+                ggs (diode-conductance is igs vt)
+                vgd (* (voltage-diff x ng nd) pol)
+                igd (diode-current is vgd vt)
+                ggd (diode-conductance is igd vt)
+                vds (- vgs vgd)
+                id-gm-gds (double-array 3)]
+            (if (pos? vds)
+              ;; normal mode
+              (let [vgs-vto (- vgs vto)
+                    b (* beta (+ 1.0 (* lambda vds)))]
+                (cond
+                 ;; cutoff
+                 (<= vgs-vto 0.0) (do)
+                 ;; saturation
+                 (<= vgs-vto vds) (do (aset-double id-gm-gds 0 (* b vgs-vto vgs-vto))
+                                      (aset-double id-gm-gds 1 (* b 2.0 vgs-vto))
+                                      (aset-double id-gm-gds 2 (* lambda beta vgs-vto vgs-vto)))
+                 ;; linear
+                 :else (do (aset-double id-gm-gds 0 (* b vds (- (* 2.0 vgs-vto) vds)))
+                           (aset-double id-gm-gds 1 (* b 2.0 vds))
+                           (aset-double id-gm-gds 2 (+ (* b 2.0 (- vgs-vto vds))
+                                                       (* lambda beta vds (- (* 2.0 vgs-vto) vds)))))))
+              ;; inverse mode
+              (let [vgd-vto (- vgd vto)
+                    b (* beta (- 1.0 (* lambda vds)))]
+                ;; cutoff
+                (cond
+                 (<= vgd-vto 0.0) (do)
+                 ;; saturation
+                 (<= vgd-vto (- vds)) (do (aset-double id-gm-gds 0 (- (* b vgd-vto vgd-vto)))
+                                          (aset-double id-gm-gds 1 (- (* b 2.0 vgd-vto)))
+                                          (aset-double id-gm-gds 2 (+ (* lambda beta vgd-vto vgd-vto)
+                                                                      (* b 2.0 vgd-vto))))
+                 ;; linear
+                 :else (do (aset-double id-gm-gds 0 (* b vds (- (* 2.0 vgd-vto) vds)))
+                           (aset-double id-gm-gds 1 (* b 2.0 vds))
+                           (aset-double id-gm-gds 2 (- (* b 2.0 vgd-vto)
+                                                       (* lambda beta vds (+ (* 2.0 vgd-vto) vds))))))))
+            (let [id (aget id-gm-gds 0)
+                  gm (aget id-gm-gds 1)
+                  gds (aget id-gm-gds 2)
+                  igseq (- igs (* ggs vgs))
+                  igdeq (- igd (* ggd vgd))
+                  idseq (- gm (* gm vgs) (* gds vds))]
+              (stamp-matrix z ng 1 (* (- igseq (- igdeq)) pol))
+              (stamp-matrix z nd 1 (* (- igdeq idseq) pol))
+              (stamp-matrix z ns 1 (* (+ idseq igseq) pol))
+              (stamp-matrix a ng ng (+ ggs ggd))
+              (stamp-matrix a ng nd (- ggd))
+              (stamp-matrix a ng ns (- ggs))
+              (stamp-matrix a nd ng (- gm ggd))
+              (stamp-matrix a nd nd (+ gds ggd))
+              (stamp-matrix a nd ns (- (- gm) gds))
+              (stamp-matrix a ns ng (- (- ggs) gm))
+              (stamp-matrix a ns nd (- gds))
+              (stamp-matrix a ns ns (+ ggs gds gm)))))))
 
 (defmethod stamp [:q :non-linear] [{:keys [models options]} {:keys [x a z]} [_ nc nb ne model]]
   (let [defaults {:tnom (:tnom options) :is 1.0e-16 :bf 100.0 :ne 1.5 :nc 2.0}
