@@ -95,7 +95,7 @@
       et)))
 
 (defn element-nodes [[_ & nodes :as e]]
-  (take ({:e 4 :opamp 3} (element-type e) 2) nodes))
+  (take ({:e 4 :j 3 :q 3 :opamp 3} (element-type e) 2) nodes))
 
 (defn number-of-nodes ^long [netlist]
   (->> (dissoc netlist :.)
@@ -427,8 +427,52 @@
                   (stamp-matrix a ns ns (+ ggs gds gm)))))))))
 
 (defmethod stamp [:q :non-linear] [{:keys [models options]} {:keys [x a z]} [_ nc nb ne model]]
-  (let [defaults {:tnom (:tnom options) :is 1.0e-16 :bf 100.0 :ne 1.5 :nc 2.0}
-        {:keys [^double is ^double tnom model-type]} (merge defaults (models model))]))
+  (let [defaults {:tnom (:tnom options) :is 1.0e-16
+                  :bf 100.0 :br 1.0 :ne 1.5 :nc 2.0
+                  :vaf Double/POSITIVE_INFINITY :var Double/POSITIVE_INFINITY
+                  :ikf Double/POSITIVE_INFINITY :ikr Double/POSITIVE_INFINITY}
+        {:keys [^double is ^double tnom ^double bf ^double br
+                ^double vaf ^double var ^double ikf ^double ikr model-type]} (merge defaults (models model))
+        vt (temprature-voltage tnom)
+        pol (case model-type
+              :npn 1.0
+              :pnp -1.0)]
+    (code (let [vbe (* (voltage-diff x nb ne) pol)
+                if (diode-current is vbe vt)
+                gif (diode-conductance is if vt)
+                gbe (/ gif bf) ;; gπ
+                ibe (/ if bf)
+                vbc (* (voltage-diff x nb nc) pol)
+                ir (diode-current is vbc vt)
+                gir (diode-conductance is ir vt)
+                gbc (/ gir br) ;; gμ
+                ibc (/ ir br)
+                vce (- vbe vbc)
+                ib (+ ibe ibc)
+                q1 (/ 1.0 (- 1.0 (/ vbc vaf) (/ vbe var)))
+                q2 (+ (/ if ikf) (/ ir ikr))
+                sqrt (Math/sqrt (+ 1.0 (* 4.0 q2)))
+                qb (* (/ q1 2) (+ 1.0 sqrt))
+                it (/ (- if ir) qb)
+                dqb-dvbe (* q1 (+ (/ qb var) (/ gif (* ikf sqrt))))
+                dqb-dvbc (* q1 (+ (/ qb vaf) (/ gir (* ikr sqrt))))
+                gmf (/ (- gif (* it dqb-dvbe)) qb) ;; gitf
+                gmr (/ (- (* it dqb-dvbc) gir) qb) ;; gitr
+                ibeeq (- ibe (* gbe vbe))
+                ibceq (- ibc (* gbc vbc))
+                iceeq (- it (* gmf vbe) (* gmr vbc))]
+            (stamp-matrix z nb 1 (* (- (- ibeeq) ibceq) pol))
+            (stamp-matrix z nc 1 (* (+ ibceq iceeq) pol))
+            (stamp-matrix z ne 1 (* (+ ibeeq iceeq) pol))
+            (stamp-matrix a nb nb (+ gbc gbe))
+            (stamp-matrix a nb nc (- gbc))
+            (stamp-matrix a nb ne (- gbe))
+            (stamp-matrix a nc nb (+ (- gbc) gmf gmr))
+            (stamp-matrix a nc nc (- gbc gmr))
+            (stamp-matrix a nc ne (- gmf))
+            (stamp-matrix a ne nb (- (- gbe) gmf gmr))
+            (stamp-matrix a ne nc gmr)
+            (stamp-matrix a ne ne (+ gbe gmf))))))
 
 ;; All About Circuits model ideal op amps as a vcvs.
 (defn opamp->e [[id ^long in+ ^long in- ^long out+]]
