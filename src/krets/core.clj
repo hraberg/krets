@@ -373,58 +373,58 @@
                 vgd (* (voltage-diff x ng nd) pol)
                 igd (diode-current is vgd vt)
                 ggd (diode-conductance is igd vt)
-                vds (- vgs vgd)
-                id-gm-gds (double-array 3)]
-            (if (pos? vds)
-              ;; normal mode
-              (let [vgs-vto (- vgs vto)
-                    b (* beta (+ 1.0 (* lambda vds)))]
-                (cond
-                 ;; cutoff
-                 (<= vgs-vto 0.0) (do)
-                 ;; saturation
-                 (<= vgs-vto vds) (do (aset id-gm-gds (unchecked-int 0) (* b vgs-vto vgs-vto))
-                                      (aset id-gm-gds (unchecked-int 1) (* b 2.0 vgs-vto))
-                                      (aset id-gm-gds (unchecked-int 2) (* lambda beta vgs-vto vgs-vto)))
-                 ;; linear
-                 :else (do (aset id-gm-gds (unchecked-int 0) (* b vds (- (* 2.0 vgs-vto) vds)))
-                           (aset id-gm-gds (unchecked-int 1) (* b 2.0 vds))
-                           (aset id-gm-gds (unchecked-int 2) (+ (* b 2.0 (- vgs-vto vds))
-                                                                (* lambda beta vds (- (* 2.0 vgs-vto) vds)))))))
-              ;; inverse mode
-              (let [vgd-vto (- vgd vto)
-                    b (* beta (- 1.0 (* lambda vds)))]
-                ;; cutoff
-                (cond
-                 (<= vgd-vto 0.0) (do)
-                 ;; saturation
-                 (<= vgd-vto (- vds)) (do (aset id-gm-gds (unchecked-int 0) (- (* b vgd-vto vgd-vto)))
-                                          (aset id-gm-gds (unchecked-int 1) (- (* b 2.0 vgd-vto)))
-                                          (aset id-gm-gds (unchecked-int 2) (+ (* lambda beta vgd-vto vgd-vto)
-                                                                               (* b 2.0 vgd-vto))))
-                 ;; linear
-                 :else (do (aset id-gm-gds (unchecked-int 0) (* b vds (- (* 2.0 vgd-vto) vds)))
-                           (aset id-gm-gds (unchecked-int 1) (* b 2.0 vds))
-                           (aset id-gm-gds (unchecked-int 2) (- (* b 2.0 vgd-vto)
-                                                                (* lambda beta vds (+ (* 2.0 vgd-vto) vds))))))))
-            (let [id (aget id-gm-gds (unchecked-int 0))
-                  gm (aget id-gm-gds (unchecked-int 1))
-                  gds (aget id-gm-gds (unchecked-int 2))
-                  igseq (- igs (* ggs vgs))
-                  igdeq (- igd (* ggd vgd))
-                  idseq (- gm (* gm vgs) (* gds vds))]
-              (stamp-matrix z ng 1 (* (- igseq (- igdeq)) pol))
-              (stamp-matrix z nd 1 (* (- igdeq idseq) pol))
-              (stamp-matrix z ns 1 (* (+ idseq igseq) pol))
-              (stamp-matrix a ng ng (+ ggs ggd))
-              (stamp-matrix a ng nd (- ggd))
-              (stamp-matrix a ng ns (- ggs))
-              (stamp-matrix a nd ng (- gm ggd))
-              (stamp-matrix a nd nd (+ gds ggd))
-              (stamp-matrix a nd ns (- (- gm) gds))
-              (stamp-matrix a ns ng (- (- ggs) gm))
-              (stamp-matrix a ns nd (- gds))
-              (stamp-matrix a ns ns (+ ggs gds gm)))))))
+                vds (- vgs vgd)]
+            (loop [id Double/NaN
+                   gm Double/NaN
+                   gds Double/NaN]
+              (if (Double/isNaN id)
+                (if (pos? vds)
+                  ;; normal mode
+                  (let [vgs-vto (- vgs vto)
+                        b (* beta (+ 1.0 (* lambda vds)))]
+                    (cond
+                     ;; cutoff
+                     (<= vgs-vto 0.0) (recur 0.0 0.0 0.0)
+                     ;; saturation
+                     (<= vgs-vto vds) (recur (* b vgs-vto vgs-vto)
+                                             (* b 2.0 vgs-vto)
+                                             (* lambda beta vgs-vto vgs-vto))
+                     ;; linear
+                     :else (recur (* b vds (- (* 2.0 vgs-vto) vds))
+                                  (* b 2.0 vds)
+                                  (+ (* b 2.0 (- vgs-vto vds))
+                                     (* lambda beta vds (- (* 2.0 vgs-vto) vds))))))
+                  ;; inverse mode
+                  (let [vgd-vto (- vgd vto)
+                        b (* beta (- 1.0 (* lambda vds)))]
+                    ;; cutoff
+                    (cond
+                     (<= vgd-vto 0.0) (recur 0.0 0.0 0.0)
+                     ;; saturation
+                     (<= vgd-vto (- vds)) (recur (- (* b vgd-vto vgd-vto))
+                                                 (- (* b 2.0 vgd-vto))
+                                                 (+ (* lambda beta vgd-vto vgd-vto)
+                                                    (* b 2.0 vgd-vto)))
+                     ;; linear
+                     :else (recur (* b vds (- (* 2.0 vgd-vto) vds))
+                                  (* b 2.0 vds)
+                                  (- (* b 2.0 vgd-vto)
+                                     (* lambda beta vds (+ (* 2.0 vgd-vto) vds)))))))
+                (let [igseq (- igs (* ggs vgs))
+                      igdeq (- igd (* ggd vgd))
+                      idseq (- gm (* gm vgs) (* gds vds))]
+                  (stamp-matrix z ng 1 (* (- igseq (- igdeq)) pol))
+                  (stamp-matrix z nd 1 (* (- igdeq idseq) pol))
+                  (stamp-matrix z ns 1 (* (+ idseq igseq) pol))
+                  (stamp-matrix a ng ng (+ ggs ggd))
+                  (stamp-matrix a ng nd (- ggd))
+                  (stamp-matrix a ng ns (- ggs))
+                  (stamp-matrix a nd ng (- gm ggd))
+                  (stamp-matrix a nd nd (+ gds ggd))
+                  (stamp-matrix a nd ns (- (- gm) gds))
+                  (stamp-matrix a ns ng (- (- ggs) gm))
+                  (stamp-matrix a ns nd (- gds))
+                  (stamp-matrix a ns ns (+ ggs gds gm)))))))))
 
 (defmethod stamp [:q :non-linear] [{:keys [models options]} {:keys [x a z]} [_ nc nb ne model]]
   (let [defaults {:tnom (:tnom options) :is 1.0e-16 :bf 100.0 :ne 1.5 :nc 2.0}

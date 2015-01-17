@@ -81,7 +81,11 @@ Yet another approach, based on random walks:
 
 * https://code.google.com/p/efficient-java-matrix-library/
 * http://www.jfree.org/
+
+#### Dev
+
 * https://github.com/hugoduncan/criterium
+* https://github.com/gtrak/no.disassemble
 
 ## License
 
