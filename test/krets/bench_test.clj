@@ -28,3 +28,6 @@
 
 (deftest micro-bench-instrumentation-amplifier
   (micro-bench "test/krets/instrumentation-amplifier.cir"))
+
+(deftest micro-bench-common-source-jfet-amplifier
+  (micro-bench "test/krets/common-source-jfet-amplifier.cir"))

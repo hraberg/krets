@@ -7,4 +7,5 @@ j1 2 1 4 mod1
 .model mod1 njf
 .tran 1m 30m
 .plot tran v(2,0) v(1,0)
+.print tran v(2,0) v(1,0)
 .end

@@ -139,7 +139,7 @@
        (apply merge {:tnom 27.0})))
 
 (defn non-linear? [netlist]
-  (boolean (some netlist [:d :opamp])))
+  (boolean (some netlist [:d :j :q :opamp])))
 
 (defn elements [netlist]
   (mapcat val (dissoc netlist :.)))
