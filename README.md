@@ -10,7 +10,8 @@ To achieve this we need to be able to simulate `V` voltage sources , `I` current
 
 The industry standard circuit simulator is called Spice. 'Krets' is Swedish for circuit.
 
-Tests and implementation guidance from http://www.ecircuitcenter.com/SPICEtopics.htm
+Tests and initial implementation guidance from http://www.ecircuitcenter.com/SPICEtopics.htm
+Non-linear models are based on the Qucs [technical papers](http://qucs.sourceforge.net/docs/technical/technical.pdf) and [source code](https://github.com/Qucs/qucs/).
 
 ## References
 
