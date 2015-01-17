@@ -160,28 +160,28 @@
   (let [[nodes data] (split-at (count (element-nodes e)) data)]
     (vec (concat [id] (replace id-map nodes) data))))
 
-(defn ensure-seqential-numeric-nodes [netlist]
-  (let [ids (node-ids netlist)
-        es (elements netlist)]
-    (w/postwalk-replace (zipmap es (map (partial reassign-element-nodes ids) es)) netlist)))
+(defn reassign-netlist-nodes [id-map netlist]
+  (let [es (elements netlist)]
+    (w/postwalk-replace (zipmap es (map (partial reassign-element-nodes id-map) es)) netlist)))
 
 (defn circuit-info [{:keys [options] :as circuit}]
-  (dissoc circuit :netlist :title :mna-stamp :voltage-source->index :solver :models :options))
+  (dissoc circuit :netlist :title :mna-stamp :voltage-source->index :solver :models :options :node-ids))
 
 (defn parse-netlist [netlist-source]
   (let [[title & lines] (-> netlist-source
                             (s/replace #"\n\+" "")
                             s/split-lines)
-        parsed-netlist (->> lines
-                            (remove (some-fn (re? #"^\*") (re? #"(?i)^.end$")))
-                            (map #(s/split % #"[\s=,()]+"))
-                            (w/postwalk (some-fn spice-number identity))
-                            (group-by element-type)
-                            ensure-seqential-numeric-nodes)]
-    (apply merge (with-meta {:netlist parsed-netlist :title title} {:netlist-source netlist-source})
+        netlist (->> lines
+                     (remove (some-fn (re? #"^\*") (re? #"(?i)^.end$")))
+                     (map #(s/split % #"[\s=,()]+"))
+                     (w/postwalk (some-fn spice-number identity))
+                     (group-by element-type))
+        id-map (node-ids netlist)
+        netlist (reassign-netlist-nodes id-map netlist)]
+    (apply merge (with-meta {:netlist netlist :title title :node-ids id-map} {:netlist-source netlist-source})
            (for [k '[number-of-nodes number-of-voltage-sources number-of-rows
                      time-step models non-linear? voltage-source->index options]]
-             {(keyword k) ((ns-resolve 'krets.core k) parsed-netlist)}))))
+             {(keyword k) ((ns-resolve 'krets.core k) netlist)}))))
 
 ;; MNA Compiler
 
@@ -284,7 +284,7 @@
       (swap! *wavefiles* assoc file out)
       (code (let [w (@*wavefiles* file)]
               (when (zero? (double t))
-                (try (.reset w) (catch Exception e (println e)))
+                (.reset w)
                 (.mark w file-size))
               (let [bs (byte-array (* number-of-channels 8))]
                 (.read w bs)
@@ -479,10 +479,12 @@
 ;; Frontend
 
 (defn report-node-label [[k n+ n-]]
-  (format "%s(%s)" k (s/join ","  (cond-> [(long n+)] n- (concat [(long n-)])))))
+  (let [f #(cond-> % (number? %) long)]
+    (format "%s(%s)" k (s/join ","  (cond-> [(f n+)] n- (concat [(f n-)]))))))
 
-(defn report-node-voltage [[k & ns] ^long number-of-nodes x]
-  (->> (for [^long n ns]
+(defn report-node-voltage [[k & ns] {:keys [^long number-of-nodes node-ids]} x]
+  (->> (for [n ns
+             :let [n (long (node-ids n 0))]]
          (if (ground? n)
            0.0
            (let [n (dec n)]
@@ -497,7 +499,7 @@
        (partition 2)
        (map (partial apply concat))))
 
-(defn print-result [{:keys [^long number-of-nodes time-step netlist]} series series-type head-label]
+(defn print-result [{:keys [^long number-of-nodes time-step netlist] :as circuit} series series-type head-label]
   (let [transient? (= :tran series-type)
         head-format (if transient?
                       (str "%." (.scale (bigdec time-step)) "f")
@@ -512,7 +514,7 @@
          (apply merge {head-label (format head-format h)}
                 (for [node nodes]
                   {(report-node-label node)
-                   (format node-format (report-node-voltage node number-of-nodes x))})))))))
+                   (format node-format (report-node-voltage node circuit x))})))))))
 
 (defn xy-series
   ([title x y]
@@ -549,7 +551,7 @@
     .pack
     (.setVisible true)))
 
-(defn plot-result [{:keys [^long number-of-nodes netlist]} series series-type head-label]
+(defn plot-result [{:keys [^long number-of-nodes netlist] :as circuit} series series-type head-label]
   (let [xs (map first series)
         ys (map second series)]
     (doseq [[_ _ & nodes] (-> netlist commands :.plot sub-commands series-type)
@@ -559,7 +561,7 @@
              (for [node nodes]
                (xy-series (report-node-label node)
                           xs
-                          (map #(report-node-voltage node number-of-nodes %) ys)))))))
+                          (map #(report-node-voltage node circuit %) ys)))))))
 
 (def ^:dynamic *normalize-wave* true)
 
@@ -587,14 +589,14 @@
     (AudioSystem/write (AudioSystem/getAudioInputStream out-format in)
                        AudioFileFormat$Type/WAVE (io/file (str (read-string file))))))
 
-(defn wave-result [{:keys [^long number-of-nodes netlist ^double time-step]} series series-type _]
+(defn wave-result [{:keys [^long number-of-nodes netlist ^double time-step] :as circuit} series series-type _]
   (let [ys (map second series)]
     (doseq [[_ file bits sample-rate & nodes] (-> netlist commands :.wave)
             :let [nodes (report-nodes nodes)]
             :when (seq nodes)]
       (apply write-wave file sample-rate bits (/ time-step)
              (for [node nodes]
-               (map #(report-node-voltage node number-of-nodes %) ys))))))
+               (map #(report-node-voltage node circuit %) ys))))))
 
 (defn batch [{:keys [title netlist models] :as circuit}]
   (let [circuit (compile-circuit circuit)]
