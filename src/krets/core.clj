@@ -261,7 +261,7 @@
               :else v1)
              double))))))
 
-(def ^:dynamic *wavefiles* (atom {}))
+(def ^:dynamic *wave-table* (atom {}))
 
 ;; wavefile="test.wav" chan=0 ;; 0 is left, 1 is right etc. range is -1 to +1 v.
 (defn wavefile-source [{:keys [^double time-step] :as circuit} [file _ ^double chan]]
@@ -281,8 +281,8 @@
                                    (* number-of-channels 8) simulation-sample-rate true)
           out (AudioSystem/getAudioInputStream out-format in)]
       (.mark out file-size)
-      (swap! *wavefiles* assoc file out)
-      (code (let [w (@*wavefiles* file)]
+      (swap! *wave-table* assoc file out)
+      (code (let [w (@*wave-table* file)]
               (when (zero? (double t))
                 (.reset w)
                 (.mark w file-size))
