@@ -723,24 +723,24 @@
    (with-open [line-out (doto (AudioSystem/getSourceDataLine out-format)
                           (.open out-format buffer-size)
                           .start)]
-     (let [circuit (compile-circuit circuit)
-           dc-result (dc-operating-point circuit)
+     (let [time-step (double (/ (.getSampleRate out-format)))
+           circuit (-> circuit (assoc :time-step time-step) (dissoc :mna-stamp) compile-circuit)
            step (step-fn circuit)
            simulation-time (double simulation-time)
-           time-step (double (/ (.getSampleRate out-format)))
-           samples (long (/ (.getBufferSize line-out) (.getFrameSize out-format)))
+           buffer-size (.getBufferSize line-out)
+           samples (long (/ buffer-size (.getFrameSize out-format)))
            amplitude (Math/pow 2 (dec (.getSampleSizeInBits out-format)))
            buffer-length (* time-step (dec samples))
-           bs (byte-array (.getBufferSize line-out))
+           bs (byte-array buffer-size)
            buffer (ByteBuffer/wrap bs)]
        (println "Line out" out-format time-step samples buffer-length)
        (loop [t 0.0
-              dc-result dc-result]
+              dc-result (dc-operating-point circuit)]
          (when (< t simulation-time)
            (let [result (mapv second (transient-analysis circuit time-step (- buffer-length time-step) t step dc-result))]
              (doseq [x result]
                (.putShort buffer (short (* amplitude (double (report-node-voltage out-node circuit x))))))
-             (.write line-out (.array buffer) 0 (.getBufferSize line-out))
+             (.write line-out (.array buffer) 0 buffer-size)
              (.flip buffer)
              (recur (+ t buffer-length) (assoc dc-result :x (last result))))))))))
 
