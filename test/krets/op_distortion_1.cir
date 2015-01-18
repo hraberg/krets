@@ -1,0 +1,49 @@
+* op_distortion_1.cir
+*
+*VS	1	0	AC	1	SIN(0V 100MV 100Hz)
+VS	1	0	AC	1	wavefile=guitar2a.wav chan=0
+RS	1	3	1K
+*
+R1	2	6	4.7K
+C1	6	0	0.047Uf
+R2	2	4	51K
+R3	4	5	5k
+C2	2	5	51PF
+D1	2	5	D1N4148
+D2	5	2	D1N4148
+XOP1	3 2	5	OPAMP1
+* ATTENUATOR
+RL1	5	7	5k
+RL2	7	0	5k
+*
+*.wave .\guitar2a_lo_gain.wav 16 44100 V(7)
+* Save node V(7) as a *.wav file, 16 bit resolution, 44100 samples per second
+*
+* DIODE
+.model	D1N4148	D(Is=0.1p Rs=16 CJO=2p Tt=12n Bv=100 Ibv=0.1p)
+*
+* OPAMP MACRO MODEL, SINGLE-POLE
+* connections:      non-inverting input
+*                   |   inverting input
+*                   |   |   output
+*                   |   |   |
+.SUBCKT OPAMP1	    1   2   6
+* INPUT IMPEDANCE
+RIN	1	2	10MEG
+* GAIN BW PRODUCT = 10MHZ
+* DC GAIN (1MEG) AND POLE 1 (10HZ)
+EGAIN	3 0	1 2	1000K
+RP1	3	4	1K
+CP1	4	0	15.9UF
+* OUTPUT BUFFER AND RESISTANCE
+EBUFFER	5 0	4 0	1
+ROUT	5	6	10
+.ENDS
+*
+* ANALYSIS *************************************
+.TRAN 	2.083333333333333E-5  5S
+*.ac dec 40 1 1000k
+.plot tran V(7)
+.wave "guitar2a-distortion-out.wav" 16 48000 V(7)
+.PROBE
+.END

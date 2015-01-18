@@ -9,9 +9,11 @@
        (filter (re? #"\.cir$"))))
 
 (deftest sanity-check
-  (doseq [f (test-circuits)]
-    (with-redefs [plot (constantly nil)
-                  print-result (constantly nil)]
+  (doseq [f (test-circuits)
+          :let [stub (constantly nil)]]
+    (with-redefs [plot-result stub
+                  print-result stub
+                  wave-result stub]
       (let [fail (volatile! nil)
             out (with-out-str
                   (try

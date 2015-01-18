@@ -10,6 +10,7 @@
     (println "running" f (:number-of-nodes c) "nodes")
     (with-redefs [plot-result stub
                   print-result stub
+                  wave-result stub
                   println stub
                   pp/print-table stub]
       (cc/quick-bench
@@ -25,9 +26,6 @@
 
 (deftest micro-bench-fullwave-bridge-rectifier
   (micro-bench "test/krets/fullwave-bridge-rectifier.cir"))
-
-(deftest micro-bench-instrumentation-amplifier
-  (micro-bench "test/krets/instrumentation-amplifier.cir"))
 
 (deftest micro-bench-common-source-jfet-amplifier
   (micro-bench "test/krets/common-source-jfet-amplifier.cir"))

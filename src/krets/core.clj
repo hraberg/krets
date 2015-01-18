@@ -15,7 +15,7 @@
            [org.ejml.factory LinearSolverFactory]
            [javax.sound.sampled AudioSystem AudioFormat
             AudioFileFormat$Type AudioInputStream AudioFormat$Encoding]
-           [java.io ByteArrayInputStream]
+           [java.io ByteArrayInputStream File]
            [java.nio ByteBuffer]))
 
 (set! *warn-on-reflection* true)
@@ -185,6 +185,16 @@
                                             (mapcat val))))
                      (conj netlist e))) []))))
 
+(defn file-relative-to-netlist ^File [circuit file]
+  (let [file (str (if (re-find #"^\"" file)
+                    (read-string file)
+                    file))
+        f (io/file file)
+        netlist-file (-> circuit meta :netlist-file)]
+    (if (and (not (.exists f)) (not (.isAbsolute f)) netlist-file)
+      (io/file (.getParent (io/file netlist-file)) file)
+      f)))
+
 (defn circuit-info [{:keys [options] :as circuit}]
   (dissoc circuit :netlist :title :mna-stamp :voltage-source->index :solver :models :options :node-ids))
 
@@ -307,12 +317,7 @@
 (defmethod independent-source [:wavefile :transient]
   [{:keys [^double time-step] :as circuit} {:keys [t]} [_ _ _ _ file _ ^double chan]]
   (let [simulation-sample-rate (/ time-step)
-        filename (str (read-string file))
-        f (io/file filename)
-        netlist-file (-> circuit meta :netlist-file)
-        f (if (and (not (.exists f)) (not (.isAbsolute f)) netlist-file)
-            (io/file (.getParent (io/file netlist-file)) filename)
-            f)
+        f (file-relative-to-netlist circuit file)
         file-size (.length f)
         in (AudioSystem/getAudioInputStream (io/input-stream f))
         number-of-channels (-> in .getFormat .getChannels)
@@ -679,7 +684,7 @@
 (def ^:dynamic *normalize-wave* true)
 
 ;; .wave "test.wav" 16 48000 v(1,0) v(2,3)
-(defn write-wave [file sample-rate bits simulation-sample-rate & channels]
+(defn write-wave [circuit file sample-rate bits simulation-sample-rate & channels]
   (let [number-of-channels (count channels)
         number-of-samples (count (first channels))
         max-sample (if *normalize-wave*
@@ -700,14 +705,14 @@
                                          (apply map vector channels)))
         in (AudioInputStream. (ByteArrayInputStream. data) in-format number-of-samples)]
     (AudioSystem/write (AudioSystem/getAudioInputStream out-format in)
-                       AudioFileFormat$Type/WAVE (io/file (str (read-string file))))))
+                       AudioFileFormat$Type/WAVE (file-relative-to-netlist circuit file))))
 
 (defn wave-result [{:keys [^long number-of-nodes netlist ^double time-step] :as circuit} series series-type _]
   (let [ys (map second series)]
     (doseq [[_ file bits sample-rate & nodes] (-> netlist commands :.wave)
             :let [nodes (report-nodes nodes)]
             :when (seq nodes)]
-      (apply write-wave file sample-rate bits (/ time-step)
+      (apply write-wave circuit file sample-rate bits (/ time-step)
              (for [node nodes]
                (map #(report-node-voltage node circuit %) ys))))))
 

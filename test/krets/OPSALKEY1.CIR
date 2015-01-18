@@ -1,0 +1,42 @@
+OPSALKEY1.CIR - OPAMP SALLEN-KEY LOW-PASS FILTER
+* 2ND-ORDER BUTTERWORTH
+*
+VS	1	0	SIN(0	1	2KHZ)
+*
+R1	1	2	11.2K
+R2	2	3	11.2K
+C1	2	5	2000PF
+C2	3	0	1000PF
+*
+* UNITY GAIN AMPLIFIER, RA=OPEN, RB=SHORT
+RA	4	0	100MEG
+RB	4	5	1
+XOP	3 4	5	OPAMP
+*
+* SINGLE RC FILTER FOR COMPARISON
+R10	1	6	15.9K
+C10	6	0	1000PF
+*
+* OPAMP MACRO MODEL, SINGLE-POLE
+* connections:      non-inverting input
+*                   |   inverting input
+*                   |   |   output
+*                   |   |   |
+.SUBCKT OPAMP	     1   2   6
+* INPUT IMPEDANCE
+RIN	1	2	10MEG
+* DC GAIN (100K) AND POLE 1 (100HZ)
+* GBWP = 10MHz
+EGAIN   3 0     1 2     100K
+RP1     3       4       1K
+CP1     4       0       1.5915UF
+* OUTPUT BUFFER AND RESISTANCE
+EBUFFER 5 0     4 0     1
+ROUT    5       6       10
+.ENDS
+* ANALYSIS
+* VIEW RESULTS
+.TRAN 	5US  500US
+.PLOT	TRAN 	V(5) v(6) v(1)
+.PROBE
+.END

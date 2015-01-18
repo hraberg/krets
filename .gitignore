@@ -8,4 +8,5 @@ pom.xml.asc
 /.lein-*
 /.nrepl-port
 /test/krets/skip
+test/krets/*-out.wav
 *~
