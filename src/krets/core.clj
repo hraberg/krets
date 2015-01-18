@@ -176,7 +176,8 @@
                            {:keys [external-nodes sub-netlist]} (@subckts subname)
                            netlist-nodes (unique-nodes netlist)
                            sub-nodes (unique-nodes sub-netlist)
-                           id-map (merge (zipmap sub-nodes (remove netlist-nodes (iterate inc 1.0)))
+                           id-map (merge (zipmap (remove (set external-nodes) sub-nodes)
+                                                 (remove netlist-nodes (iterate inc 1.0)))
                                          (zipmap external-nodes nodes))]
                        (concat netlist (->> sub-netlist
                                             (group-by element-type)
