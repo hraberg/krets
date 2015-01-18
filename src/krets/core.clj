@@ -718,12 +718,12 @@
       (println x)
       (println)
       (doseq [[_ source start stop step] (:.dc (commands netlist))
-              :let [sweep (do (println  "DC Analysis")
+              :let [sweep (do (println  "DC Analysis" start stop step)
                               (time (dc-analysis circuit source start stop step)))]]
         (print-result circuit sweep :dc source)
         (plot-result circuit sweep :dc source))
       (doseq [[_ time-step simulation-time start] (:.tran (commands netlist))
-              :let [series (do (println "Transient Analysis" time-step simulation-time)
+              :let [series (do (println "Transient Analysis" time-step simulation-time (str start))
                                (time (transient-analysis circuit time-step simulation-time dc-result)))
                     series (cond->> series
                                     (number? start) (drop-while (fn [[^double t]] (< t (double start)))))]
