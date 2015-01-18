@@ -86,24 +86,25 @@
 (def ground? zero?)
 
 (defn number-of-voltage-sources ^long [netlist]
-  (count (mapcat netlist [:v :e :opamp])))
+  (count (mapcat netlist [:v :e])))
 
 (defn element-type [[[t] & nodes]]
-  (let [et (low-key t)]
-    (if (= :x et)
-      (low-key (first (filter string? nodes)))
-      et)))
+  (low-key t))
 
 (defn element-nodes [[_ & nodes :as e]]
-  (take ({:e 4 :j 3 :q 3 :opamp 3} (element-type e) 2) nodes))
+  (take ({:e 4 :j 3 :q 3 :. 0} (element-type e) 2) nodes))
+
+(defn unique-nodes [elements]
+  (->> elements
+       (mapcat element-nodes)
+       (remove ground?)
+       set))
 
 (defn number-of-nodes ^long [netlist]
   (->> (dissoc netlist :.)
        vals
        (apply concat)
-       (mapcat element-nodes)
-       (remove ground?)
-       set
+       unique-nodes
        count))
 
 (defn number-of-rows [netlist]
@@ -112,7 +113,7 @@
 
 (defn voltage-source->index [netlist]
   (let [number-of-nodes (number-of-nodes netlist)]
-    (into {} (for [[^long idx [id]] (map-indexed vector (mapcat netlist [:v :e :opamp]))]
+    (into {} (for [[^long idx [id]] (map-indexed vector (mapcat netlist [:v :e]))]
                [id (inc (+ number-of-nodes idx))]))))
 
 (defn commands [netlist]
@@ -139,7 +140,7 @@
        (apply merge {:tnom 27.0})))
 
 (defn non-linear? [netlist]
-  (boolean (some netlist [:d :j :q :opamp])))
+  (boolean (some netlist [:d :j :q])))
 
 (defn elements [netlist]
   (mapcat val (dissoc netlist :.)))
@@ -156,6 +157,33 @@
   (let [es (elements netlist)]
     (w/postwalk-replace (zipmap es (map (partial reassign-element-nodes id-map) es)) netlist)))
 
+;; this only handles one level, a subcircuit can both contain calls and definitions of other ones.
+(defn flatten-subscircuits [netlist]
+  (let [subckts (volatile! {})]
+    (->> netlist
+         ((fn subcircuit-parser [netlist]
+            (when netlist
+              (let [splitter #(complement (comp (re? %) first))
+                    [es sub] (split-with (splitter #"(?i)^.subckt") netlist)
+                    [[[_ subname & external-nodes] & sub] [_ & netlist]] (split-with (splitter #"(?i)^.ends") sub)]
+                (when subname
+                  (vswap! subckts assoc subname {:external-nodes external-nodes :sub-netlist sub}))
+                (concat es (subcircuit-parser netlist))))))
+         (reduce (fn [netlist e]
+                   (if (= :x (element-type e))
+                     (let [[_ & nodes] e
+                           [nodes subname] [(butlast nodes) (last nodes)]
+                           {:keys [external-nodes sub-netlist]} (@subckts subname)
+                           netlist-nodes (unique-nodes netlist)
+                           sub-nodes (unique-nodes sub-netlist)
+                           id-map (merge (zipmap sub-nodes (remove netlist-nodes (iterate inc 1.0)))
+                                         (zipmap external-nodes nodes))]
+                       (concat netlist (->> sub-netlist
+                                            (group-by element-type)
+                                            (reassign-netlist-nodes id-map)
+                                            (mapcat val))))
+                     (conj netlist e))) []))))
+
 (defn circuit-info [{:keys [options] :as circuit}]
   (dissoc circuit :netlist :title :mna-stamp :voltage-source->index :solver :models :options :node-ids))
 
@@ -167,6 +195,7 @@
                      (remove (some-fn (re? #"^\*") (re? #"(?i)^.end$")))
                      (map #(s/split % #"[\s=,()]+"))
                      (w/postwalk (some-fn spice-number identity))
+                     flatten-subscircuits
                      (group-by element-type))
         id-map (node-ids netlist)
         netlist (reassign-netlist-nodes id-map netlist)]
@@ -236,6 +265,10 @@
 
 (defmethod independent-source [:dc :linear] [_ _ [_ _ _ & [t :as source]]]
   (or (first (filter number? source)) 0.0))
+
+(defmethod independent-source [:ac :transient] [circuit env [id n+ n- & [ac & opts]]]
+  (let [transient-part (drop-while number? opts)]
+    (independent-source circuit env (concat [id n+ n-] transient-part))))
 
 (defmethod independent-source [:sin :transient]
   [_  {:keys [t]} [_ _ _ _ vo va ^double freq td thet]]
@@ -455,31 +488,6 @@
             (stamp-matrix a ne nb (- (- gbe) gmf gmr))
             (stamp-matrix a ne nc gmr)
             (stamp-matrix a ne ne (+ gbe gmf))))))
-
-;; All About Circuits model ideal op amps as a vcvs.
-(defn opamp->e [[id ^long in+ ^long in- ^long out+]]
-  [(str "e" id) out+ 0 in+ in- 999e3])
-
-(defmethod stamp [:opamp :linear] [{:keys [voltage-source->index]} {:keys [a]}
-                                   [id ^long in+ ^long in- ^long out+]]
-  (let [idx (voltage-source->index id)]
-    (code (stamp-matrix a idx out+ -1.0)
-          (stamp-matrix a out+ idx 1.0))))
-
-(defmethod stamp [:opamp :non-linear] [{:keys [voltage-source->index]} {:keys [a z x]}
-                                       [id ^long in+ ^long in- ^long out+]]
-  (let [idx (voltage-source->index id)
-        gain 1e6
-        vmax 15
-        pi-by-2-v-max (/ Math/PI (* 2 vmax))
-        vmax-2-by-pi (* vmax (/ 2 Math/PI))]
-    (code (let [vd (voltage-diff x in+ in-)
-                tmp (* pi-by-2-v-max gain vd)
-                v (* vmax-2-by-pi (Math/atan tmp))
-                g (/ gain (+ 1 (Math/pow tmp 2)))]
-            (stamp-matrix z idx 1 (- (* g vd) v))
-            (stamp-matrix a idx in+ g)
-            (stamp-matrix a idx in- (- g))))))
 
 (defn compile-mna-stamp [{:keys [netlist] :as circuit}]
   `(reify MNAStamp
