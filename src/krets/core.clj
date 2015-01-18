@@ -556,12 +556,13 @@
   (let [step-fn (step-fn circuit)
         start (double start)
         stop (double stop)
-        step (double step)]
+        step (double step)
+        steps (long (inc (/ (- stop start) step)))]
     (loop [v start
            idx 0
            x (zero-matrix number-of-rows 1)
-           acc (object-array (long (inc (/ (- stop start) step))))]
-      (if (> v stop)
+           acc (object-array steps)]
+      (if (= steps idx)
         acc
         (let [x (binding [*voltage-sources* (assoc *voltage-sources* source v)]
                   (:x (dc-operating-point circuit step-fn x)))]
@@ -575,12 +576,13 @@
    (let [step (step-fn circuit)
          end (+ simulation-time time-step)
          number-of-rows (long number-of-rows)
-         z (zero-matrix number-of-rows 1)]
+         z (zero-matrix number-of-rows 1)
+         steps (long (/ end time-step))]
      (loop [t 0.0
             idx 0
             x x
-            acc (object-array (/ end time-step))]
-       (if (> t end)
+            acc (object-array steps)]
+       (if (= steps idx)
          acc
          (do (set-matrix! z z0)
              (transient-stamp! mna-stamp z x t)
