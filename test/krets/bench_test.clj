@@ -5,7 +5,7 @@
             [clojure.pprint :as pp]))
 
 (defn micro-bench [f]
-  (let [c (-> f slurp parse-netlist compile-circuit)
+  (let [c (-> f read-netlist compile-circuit)
         stub (constantly nil)]
     (println "running" f (:number-of-nodes c) "nodes")
     (with-redefs [plot-result stub
@@ -32,3 +32,6 @@
 
 (deftest micro-bench-common-base-bjt-amplifier
   (micro-bench "test/krets/common-base-bjt-amplifier.cir"))
+
+(deftest micro-bench-op-distortion-1
+  (micro-bench "test/krets/op_distortion_1.cir"))

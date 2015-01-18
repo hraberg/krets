@@ -575,15 +575,15 @@
 
 (defn transient-analysis
   ([circuit ^double time-step ^double simulation-time]
-   (transient-analysis circuit time-step simulation-time (dc-operating-point circuit)))
+   (transient-analysis circuit time-step simulation-time 0 (step-fn circuit) (dc-operating-point circuit)))
   ([{:keys [mna-stamp number-of-rows] :as circuit}
-    ^double time-step ^double simulation-time {:keys [a x] z0 :z}]
-   (let [step (step-fn circuit)
-         end (+ simulation-time time-step)
+    time-step simulation-time start-time step {:keys [a x] z0 :z}]
+   (let [time-step (double time-step)
+         end (+ (double simulation-time) time-step)
          number-of-rows (long number-of-rows)
          z (zero-matrix number-of-rows 1)
          steps (long (/ end time-step))]
-     (loop [t 0.0
+     (loop [t (double start-time)
             idx 0
             x x
             acc (object-array steps)]
@@ -716,6 +716,34 @@
              (for [node nodes]
                (map #(report-node-voltage node circuit %) ys))))))
 
+(defn line-out
+  ([circuit out-node]
+   (line-out circuit (AudioFormat. 48000 16 1 true true) 1024 2 out-node))
+  ([circuit ^AudioFormat out-format buffer-size simulation-time out-node]
+   (with-open [line-out (doto (AudioSystem/getSourceDataLine out-format)
+                          (.open out-format buffer-size)
+                          .start)]
+     (let [circuit (compile-circuit circuit)
+           dc-result (dc-operating-point circuit)
+           step (step-fn circuit)
+           simulation-time (double simulation-time)
+           time-step (double (/ (.getSampleRate out-format)))
+           samples (long (/ (.getBufferSize line-out) (.getFrameSize out-format)))
+           amplitude (Math/pow 2 (dec (.getSampleSizeInBits out-format)))
+           buffer-length (* time-step (dec samples))
+           bs (byte-array (.getBufferSize line-out))
+           buffer (ByteBuffer/wrap bs)]
+       (println "Line out" out-format time-step samples buffer-length)
+       (loop [t 0.0
+              dc-result dc-result]
+         (when (< t simulation-time)
+           (let [result (mapv second (transient-analysis circuit time-step (- buffer-length time-step) t step dc-result))]
+             (doseq [x result]
+               (.putShort buffer (short (* amplitude (double (report-node-voltage out-node circuit x))))))
+             (.write line-out (.array buffer) 0 (.getBufferSize line-out))
+             (.flip buffer)
+             (recur (+ t buffer-length) (assoc dc-result :x (last result))))))))))
+
 (defn batch [{:keys [title netlist models] :as circuit}]
   (let [circuit (compile-circuit circuit)]
     (println title)
@@ -740,7 +768,7 @@
         (plot-result circuit sweep :dc source))
       (doseq [[_ time-step simulation-time start] (:.tran (commands netlist))
               :let [series (do (println "Transient Analysis" time-step simulation-time (str start))
-                               (time (transient-analysis circuit time-step simulation-time dc-result)))
+                               (time (transient-analysis circuit time-step simulation-time 0.0 (step-fn circuit) dc-result)))
                     series (cond->> series
                                     (number? start) (drop-while (fn [[^double t]] (< t (double start)))))]
               f [print-result plot-result wave-result]]
@@ -756,8 +784,11 @@
       (when (not (zero? exit))
         (println err)))))
 
+(defn read-netlist [f]
+  (-> f slurp parse-netlist (with-meta {:netlist-file f})))
+
 (defn process-file [f]
-  (-> f slurp parse-netlist (with-meta {:netlist-file f}) batch))
+  (-> f read-netlist batch))
 
 (defn -main [& [f]]
   (if f
