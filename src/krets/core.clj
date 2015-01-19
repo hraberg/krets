@@ -84,7 +84,7 @@
 (defn re? [re]
   #(re-find re (str %)))
 
-(def ground? zero?)
+(def ground? (every-pred number? zero?))
 
 (defn number-of-voltage-sources ^long [netlist]
   (count (mapcat netlist [:v :e])))
@@ -147,8 +147,8 @@
   (mapcat val (dissoc netlist :.)))
 
 (defn node-ids [netlist]
-  (let [{ns true ss false} (group-by number? (mapcat element-nodes (elements netlist)))]
-    (merge (zipmap ns ns) (zipmap (set ss) (remove (conj (set ns) 0.0) (map double (range)))))))
+  (let [{ns true ss false} (group-by number? (unique-nodes (elements netlist)))]
+    (zipmap (concat (sort ns) (sort ss)) (iterate inc 1.0))))
 
 (defn reassign-element-nodes [id-map [id & data :as e]]
   (let [[nodes data] (split-at (count (element-nodes e)) data)]
@@ -204,7 +204,7 @@
                             (s/replace #"\n\+" "")
                             s/split-lines)
         netlist (->> lines
-                     (remove (some-fn (re? #"^\*") (re? #"(?i)^.end$")))
+                     (remove (some-fn (re? #"^\*") (re? #"^\w*$") (re? #"(?i)^.end$")))
                      (map #(s/split % #"[\s=,()]+"))
                      (w/postwalk (some-fn spice-number identity))
                      flatten-subscircuits
@@ -783,8 +783,9 @@
   (let [circuit (compile-circuit circuit)]
     (println title)
     (pp/print-table [(circuit-info circuit)])
-    (when models
-      (pp/print-table [models]))
+    (doseq [[m kvs] models]
+      (println m)
+      (println (s/join "\n" (rest (s/split-lines (with-out-str (pp/print-table [kvs])))))))
     (println)
     (let [{:keys [a z x] :as dc-result} (do (println "DC Operating Point Analysis")
                                             (time (dc-operating-point circuit)))]
