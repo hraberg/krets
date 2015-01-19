@@ -517,12 +517,26 @@
 
 ;; MNA Analysis
 
+(defn conventional-newton [^DenseMatrix64F xn _]
+  xn)
+
+(defn damped-newton [^DenseMatrix64F xn ^DenseMatrix64F xn-1]
+  (let [dx (doto xn (CommonOps/subtractEquals xn-1))
+        max-norm (CommonOps/elementMaxAbs dx)
+        alpha (if (pos? max-norm)
+                (max (min 0.9 (/ 1.0 max-norm)) 0.1)
+                1.0)]
+    (CommonOps/add alpha dx xn-1 dx)
+    dx))
+
 (def ^:dynamic *newton-tolerance* 1e-8)
 (def ^:dynamic *newton-iterations* 500)
+(def ^:dynamic *newton-converge* conventional-newton)
 
 (defn non-linear-step-fn [{:keys [mna-stamp solver ^long number-of-rows]}]
   (let [newton-tolerance (double *newton-tolerance*)
         newton-iterations (long *newton-iterations*)
+        newton-converge *newton-converge*
         anl (zero-matrix number-of-rows number-of-rows)
         znl (zero-matrix number-of-rows 1)]
     (fn [a z x]
@@ -537,7 +551,7 @@
               (let [xn (solve solver znl)]
                 (if (equals xn xn-1 newton-tolerance)
                   xn
-                  (recur xn (dec iters))))))))))
+                  (recur (newton-converge xn xn-1) (dec iters))))))))))
 
 (defn linear-step-fn [{:keys [solver]}]
   (fn [a z _]
@@ -783,6 +797,8 @@
   (let [circuit (compile-circuit circuit)]
     (println title)
     (pp/print-table [(circuit-info circuit)])
+    (when (seq models)
+      (println))
     (doseq [[m kvs] models]
       (println m)
       (println (s/join "\n" (rest (s/split-lines (with-out-str (pp/print-table [kvs])))))))
