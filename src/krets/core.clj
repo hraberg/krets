@@ -13,10 +13,11 @@
            [org.ejml.ops CommonOps MatrixFeatures]
            [org.ejml.interfaces.linsol LinearSolver]
            [org.ejml.factory LinearSolverFactory]
+           [org.jaudiolibs.jnajack.util SimpleAudioClient SimpleAudioClient$Processor]
            [javax.sound.sampled AudioSystem AudioFormat
             AudioFileFormat$Type AudioInputStream AudioFormat$Encoding]
            [java.io ByteArrayInputStream File]
-           [java.nio ByteBuffer]))
+           [java.nio ByteBuffer FloatBuffer]))
 
 (set! *warn-on-reflection* true)
 (set! *unchecked-math* :warn-on-boxed)
@@ -600,9 +601,9 @@
   (let [f #(cond-> % (number? %) long)]
     (format "%s(%s)" k (s/join ","  (cond-> [(f n+)] n- (concat [(f n-)]))))))
 
-(defn report-node-voltage [[k & ns] {:keys [^long number-of-nodes node-ids]} x]
+(defn report-node-voltage [{:keys [^long number-of-nodes node-ids]} [k & ns] x]
   (->> (for [n ns
-             :let [n (long (node-ids n 0))]]
+             :let [n (long (node-ids (double n) 0))]]
          (if (ground? n)
            0.0
            (let [n (dec n)]
@@ -632,7 +633,7 @@
          (apply merge {head-label (format head-format h)}
                 (for [node nodes]
                   {(report-node-label node)
-                   (format node-format (report-node-voltage node circuit x))})))))))
+                   (format node-format (report-node-voltage circuit node x))})))))))
 
 (defn xy-series
   ([title x y]
@@ -679,7 +680,7 @@
              (for [node nodes]
                (xy-series (report-node-label node)
                           xs
-                          (map #(report-node-voltage node circuit %) ys)))))))
+                          (map #(report-node-voltage circuit node %) ys)))))))
 
 (def ^:dynamic *normalize-wave* true)
 
@@ -714,11 +715,44 @@
             :when (seq nodes)]
       (apply write-wave circuit file sample-rate bits (/ time-step)
              (for [node nodes]
-               (map #(report-node-voltage node circuit %) ys))))))
+               (map #(report-node-voltage circuit node %) ys))))))
+
+(defn jack-out [circuit simulation-time out-node]
+  (let [state (volatile! nil)
+        proc (reify SimpleAudioClient$Processor
+               (setup [_ sample-rate buffer-size]
+                 (let [time-step (double (/ sample-rate))
+                       circuit (-> circuit (assoc :time-step time-step) (dissoc :mna-stamp) compile-circuit)]
+                   (vreset! state
+                            {:time 0.0 :time-step time-step :circuit circuit
+                             :step (step-fn circuit) :buffer-size buffer-size
+                             :dc-result (dc-operating-point circuit)})
+                   (println "Jack out" sample-rate buffer-size time-step)))
+
+               (process [_ input output]
+                 (let [{:keys [^double time-step ^double time ^long buffer-size
+                               circuit step dc-result]} @state
+                               buffer-length (* buffer-size time-step)
+                               result ^objects (transient-analysis circuit time-step
+                                                                   (- buffer-length time-step) time step dc-result)]
+                   (vswap! state merge {:dc-result (assoc dc-result :x (second (last result)))
+                                        :time (+ time buffer-length)})
+                   (dotimes [i buffer-size]
+                     (let [s (report-node-voltage circuit out-node (second (aget result i)))]
+                       (doseq [^FloatBuffer out output]
+                         (.put out i (float s)))))))
+
+               (shutdown [_]))
+        client (SimpleAudioClient/create
+                "krets" (make-array String 0) (into-array String ["output-L" "output-R"])
+                true true proc)]
+    (.activate client)
+    (Thread/sleep (* 1000 (double simulation-time)))
+    (.shutdown client)))
 
 (defn line-out
-  ([circuit out-node]
-   (line-out circuit (AudioFormat. 48000 16 1 true true) 1024 2 out-node))
+  ([circuit simulation-time out-node]
+   (line-out circuit (AudioFormat. 48000 16 1 true true) 1024 simulation-time out-node))
   ([circuit ^AudioFormat out-format buffer-size simulation-time out-node]
    (with-open [line-out (doto (AudioSystem/getSourceDataLine out-format)
                           (.open out-format buffer-size)
@@ -732,17 +766,18 @@
            amplitude (Math/pow 2 (dec (.getSampleSizeInBits out-format)))
            buffer-length (* time-step (dec samples))
            bs (byte-array buffer-size)
-           buffer (ByteBuffer/wrap bs)]
+           buffer (ByteBuffer/wrap bs)
+           dc-result (dc-operating-point circuit)]
        (println "Line out" out-format time-step samples buffer-length)
        (loop [t 0.0
-              dc-result (dc-operating-point circuit)]
+              dc-result dc-result]
          (when (< t simulation-time)
-           (let [result (mapv second (transient-analysis circuit time-step (- buffer-length time-step) t step dc-result))]
-             (doseq [x result]
-               (.putShort buffer (short (* amplitude (double (report-node-voltage out-node circuit x))))))
+           (let [result (transient-analysis circuit time-step (- buffer-length time-step) t step dc-result)]
+             (doseq [[_ x] result]
+               (.putShort buffer (short (* amplitude (double (report-node-voltage circuit out-node x))))))
              (.write line-out (.array buffer) 0 buffer-size)
              (.flip buffer)
-             (recur (+ t buffer-length) (assoc dc-result :x (last result))))))))))
+             (recur (+ t buffer-length) (assoc dc-result :x (second (last result)))))))))))
 
 (defn batch [{:keys [title netlist models] :as circuit}]
   (let [circuit (compile-circuit circuit)]

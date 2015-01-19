@@ -88,6 +88,10 @@ Yet another approach, based on random walks:
 * https://github.com/hugoduncan/criterium
 * https://github.com/gtrak/no.disassemble
 
+#### Experimental
+
+* https://github.com/jaudiolibs/jnajack
+
 ## License
 
 Copyright © 2015 Håkan Råberg
