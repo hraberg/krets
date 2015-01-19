@@ -530,20 +530,21 @@
     dx))
 
 (def ^:dynamic *newton-tolerance* 1e-8)
-(def ^:dynamic *newton-iterations* 500)
-(def ^:dynamic *newton-converge* conventional-newton)
+(def ^:dynamic *newton-iterations* 100)
 
 (defn non-linear-step-fn [{:keys [mna-stamp solver ^long number-of-rows]}]
   (let [newton-tolerance (double *newton-tolerance*)
         newton-iterations (long *newton-iterations*)
-        newton-converge *newton-converge*
         anl (zero-matrix number-of-rows number-of-rows)
         znl (zero-matrix number-of-rows 1)]
     (fn [a z x]
       (loop [xn-1 x
-             iters newton-iterations]
+             iters newton-iterations
+             converge conventional-newton]
         (if (zero? iters)
-          (throw (ex-info "Didn't converge." {:x xn-1}))
+          (if (= damped-newton converge)
+            (throw (ex-info "Didn't converge." {:x xn-1}))
+            (recur x newton-iterations damped-newton))
           (do (set-matrix! anl a)
               (set-matrix! znl z)
               (non-linear-stamp! mna-stamp anl znl xn-1)
@@ -551,7 +552,7 @@
               (let [xn (solve solver znl)]
                 (if (equals xn xn-1 newton-tolerance)
                   xn
-                  (recur (newton-converge xn xn-1) (dec iters))))))))))
+                  (recur (converge xn xn-1) (dec iters) converge)))))))))
 
 (defn linear-step-fn [{:keys [solver]}]
   (fn [a z _]

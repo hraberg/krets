@@ -35,3 +35,6 @@
 
 (deftest micro-bench-op-distortion-1
   (micro-bench "test/krets/op_distortion_1.cir"))
+
+(deftest micro-bench-basic-amplifier
+  (micro-bench "test/krets/Basic_Amplifier.cir"))
