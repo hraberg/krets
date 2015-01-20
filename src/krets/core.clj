@@ -828,16 +828,24 @@
 
 (defn spice
   ([circuit]
-   (spice ["ngspice" "-b"] circuit))
-  ([cmd circuit]
-   (let [{:keys [out err ^long exit]} (apply sh/sh (concat cmd  [:in (-> circuit meta :netlist-source)]))]
+   (spice ["ngspice" "-b"] (-> circuit meta :netlist-source)))
+  ([cmd netlist-source]
+   (let [{:keys [out err ^long exit]} (apply sh/sh (concat cmd  [:in netlist-source]))]
      (when out
        (println out))
       (when (not (zero? exit))
         (println err)))))
 
+(defn ngspice-graphical-plot-netlist [{:keys [netlist] :as circuit}]
+  (->> (concat [(-> circuit meta :netlist-source)]
+               [".control" "run"]
+               (for [[_ _ & nodes] (-> netlist commands :.plot)]
+                 (apply str "plot " (map report-node-label (report-nodes nodes))))
+               [".endc"])
+       (s/join "\n")))
+
 (defn read-netlist [f]
-  (-> f slurp parse-netlist (with-meta {:netlist-file f})))
+  (-> f slurp parse-netlist (vary-meta assoc :netlist-file f)))
 
 (defn process-file [f]
   (-> f read-netlist batch))
