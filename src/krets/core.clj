@@ -697,11 +697,11 @@
    (let [xs (map first series)
          ys (map second series)]
      (for [[_ _ & nodes] (-> netlist commands :.plot sub-commands series-type)
-           :let [nodes (report-nodes nodes)]
-           node nodes]
-       (xy-series (report-node-label node)
-                  xs
-                  (map #(report-node-voltage circuit node %) ys))))))
+           :let [nodes (report-nodes nodes)]]
+       (for [node nodes]
+         (xy-series (report-node-label node)
+                    xs
+                    (map #(report-node-voltage circuit node %) ys)))))))
 
 (defn plot-result [{:keys [^long number-of-nodes netlist] :as circuit} series series-type head-label]
   (doseq [ss (plot-series circuit series series-type)]
@@ -919,12 +919,12 @@
                 (->> (for [[s report-node-label] (map vector (cons series krets-series)
                                                       (cons spice-node-label
                                                             (repeat report-node-label)))]
-                      (plot-series circuit s :tran report-node-label))
+                       (apply concat (plot-series circuit s :tran report-node-label)))
                      (apply concat)
                      (apply plot "t" "V")))
         :dc (doseq [{:keys [source sweep]} (dc-sweep circuit)]
               (->> (for [[s report-node-label] [[series spice-node-label] [sweep report-node-label]]]
-                     (plot-series circuit s :dc report-node-label))
+                     (apply concat (plot-series circuit s :dc report-node-label)))
                    (apply concat)
                    (apply plot source "V")))))))
 
