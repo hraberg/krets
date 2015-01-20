@@ -915,18 +915,16 @@
           {:keys [series type]} (parse-ngspice-ascii-raw file)
           spice-node-label (fn [x] (str "spice-" (report-node-label x)))]
       (case type
-        :tran (let [krets-series (map :series (transient-series circuit (dc-operating-point circuit)))]
-                (->> (for [[s report-node-label] (map vector (cons series krets-series)
-                                                      (cons spice-node-label
-                                                            (repeat report-node-label)))]
-                       (apply concat (plot-series circuit s :tran report-node-label)))
-                     (apply concat)
-                     (apply plot "t" "V")))
-        :dc (doseq [{:keys [source sweep]} (dc-sweep circuit)]
-              (->> (for [[s report-node-label] [[series spice-node-label] [sweep report-node-label]]]
-                     (apply concat (plot-series circuit s :dc report-node-label)))
-                   (apply concat)
-                   (apply plot source "V")))))))
+        :tran (let [{krets-series :series} (first (transient-series circuit (dc-operating-point circuit)))]
+                (doseq [[a b] (map vector
+                                   (plot-series circuit krets-series :tran report-node-label)
+                                   (plot-series circuit series :tran spice-node-label))]
+                  (apply plot "t" "V" (concat a b))))
+        :dc (let [{:keys [source sweep]} (first (dc-sweep circuit))]
+              (doseq [[a b] (map vector
+                                 (plot-series circuit sweep :dc report-node-label)
+                                 (plot-series circuit series :dc spice-node-label))]
+                (apply plot source "V" (concat a b))))))))
 
 (defn -main [& [f]]
   (if f
