@@ -810,14 +810,16 @@
                          (time (transient-analysis circuit time-step simulation-time 0.0 (step-fn circuit) dc-result)))
               series (cond->> series
                               (number? start) (drop-while (fn [[^double t]] (< t (double start)))))]]
-    {:time-step time-step
+    {:type :tran
+     :time-step time-step
      :simulation-time simulation-time
      :start start
      :series series}))
 
 (defn dc-sweep [{:keys [netlist] :as circuit}]
   (for [[_ source start stop step] (:.dc (commands netlist))]
-    {:source source
+    {:type :dc
+     :source source
      :start start
      :stop stop
      :step step
@@ -912,18 +914,18 @@
     (spice ["ngspice" "-b"] (ngspice-netlist circuit ngspice-output-data))
     (let [circuit (compile-circuit circuit)
           file (file-relative-to-netlist circuit (str (-> circuit meta :netlist-file) ".raw"))
-          {:keys [series type]} (parse-ngspice-ascii-raw file)
+          {:keys [type] spice-series :series} (parse-ngspice-ascii-raw file)
           spice-node-label (fn [x] (str "spice-" (report-node-label x)))]
       (case type
-        :tran (let [{krets-series :series} (first (transient-series circuit (dc-operating-point circuit)))]
+        :tran (let [[{:keys [series]}] (transient-series circuit (dc-operating-point circuit))]
                 (doseq [[a b] (map vector
-                                   (plot-series circuit krets-series :tran report-node-label)
-                                   (plot-series circuit series :tran spice-node-label))]
+                                   (plot-series circuit series type report-node-label)
+                                   (plot-series circuit spice-series type spice-node-label))]
                   (apply plot "t" "V" (concat a b))))
-        :dc (let [{:keys [source sweep]} (first (dc-sweep circuit))]
+        :dc (let [[{:keys [source sweep]}] (dc-sweep circuit)]
               (doseq [[a b] (map vector
-                                 (plot-series circuit sweep :dc report-node-label)
-                                 (plot-series circuit series :dc spice-node-label))]
+                                 (plot-series circuit sweep type report-node-label)
+                                 (plot-series circuit spice-series type spice-node-label))]
                 (apply plot source "V" (concat a b))))))))
 
 (defn -main [& [f]]
