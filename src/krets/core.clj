@@ -517,8 +517,7 @@
 
 ;; MNA Analysis
 
-(defn conventional-newton [^DenseMatrix64F xn _]
-  xn)
+(defn conventional-newton [xn _] xn)
 
 (defn damped-newton [^DenseMatrix64F xn ^DenseMatrix64F xn-1]
   (let [dx (doto xn (CommonOps/subtractEquals xn-1))
