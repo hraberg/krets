@@ -846,9 +846,9 @@
       (println "x")
       (println x)
       (println)
-      (doseq [{:keys [source sweep]} (dc-sweep circuit)]
-        (print-result circuit sweep :dc source)
-        (plot-result circuit sweep :dc source))
+      (doseq [{:keys [source sweep]} (dc-sweep circuit)
+              f [print-result plot-result]]
+        (f circuit sweep :dc source))
       (doseq [{:keys [series]} (transient-series circuit dc-result)
               f [print-result plot-result wave-result]]
         (f circuit series :tran "t")))))
@@ -909,24 +909,27 @@
                     [x (doto (zero-matrix (count ys) 1)
                          (.setData (double-array ys)))]))}))
 
+(defn ngspice-node-label [x]
+  (str "spice-" (report-node-label x)))
+
+(defn overlap-plot [circuit type head-label series spice-series]
+  (doseq [[a b] (->> (interleave (plot-series circuit series type report-node-label)
+                                 (plot-series circuit spice-series type ngspice-node-label))
+                     (partition 2))]
+    (apply plot head-label "V" (concat a b))))
+
 (defn ngspice-plot [{:keys [netlist] :as circuit}]
   (when (-> netlist commands :.plot)
     (spice ["ngspice" "-b"] (ngspice-netlist circuit ngspice-output-data))
     (let [circuit (compile-circuit circuit)
-          file (file-relative-to-netlist circuit (str (-> circuit meta :netlist-file) ".raw"))
-          {:keys [type] spice-series :series} (parse-ngspice-ascii-raw file)
-          spice-node-label (fn [x] (str "spice-" (report-node-label x)))]
+          file (str (-> circuit meta :netlist-file) ".raw")
+          file (file-relative-to-netlist circuit file)
+          {:keys [type] spice-series :series} (parse-ngspice-ascii-raw file)]
       (case type
-        :tran (let [[{:keys [series]}] (transient-series circuit (dc-operating-point circuit))]
-                (doseq [[a b] (map vector
-                                   (plot-series circuit series type report-node-label)
-                                   (plot-series circuit spice-series type spice-node-label))]
-                  (apply plot "t" "V" (concat a b))))
-        :dc (let [[{:keys [source sweep]}] (dc-sweep circuit)]
-              (doseq [[a b] (map vector
-                                 (plot-series circuit sweep type report-node-label)
-                                 (plot-series circuit spice-series type spice-node-label))]
-                (apply plot source "V" (concat a b))))))))
+        :tran (let [{:keys [series]} (first (transient-series circuit (dc-operating-point circuit)))]
+                (overlap-plot circuit type "t" series spice-series))
+        :dc (let [{:keys [source sweep]} (first (dc-sweep circuit))]
+              (overlap-plot circuit type source sweep spice-series))))))
 
 (defn -main [& [f]]
   (if f
