@@ -9,4 +9,5 @@ pom.xml.asc
 /.nrepl-port
 /test/krets/skip
 test/krets/*-out.wav
+test/krets/*.raw
 *~

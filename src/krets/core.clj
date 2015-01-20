@@ -848,11 +848,11 @@
 
 (defn ngspice-output-data
   ([circuit]
-   (let [file (file-relative-to-netlist circuit (str (-> circuit meta :netlist-file) ".out"))]
+   (let [file (file-relative-to-netlist circuit (str (-> circuit meta :netlist-file)))]
      (ngspice-output-data file circuit)))
   ([file {:keys [netlist] :as circuit}]
-    [(str "print all > " file ".txt")
-     (str "write " file ".raw")]))
+   ["set filetype=ascii"
+    (str "write " file ".raw")]))
 
 (defn read-netlist [f]
   (-> f slurp parse-netlist (vary-meta assoc :netlist-file f)))
