@@ -199,14 +199,20 @@
 (defn circuit-info [{:keys [options] :as circuit}]
   (dissoc circuit :netlist :title :mna-stamp :voltage-source->index :solver :models :options :node-ids))
 
+(defn tokenize-netlist-line [s]
+  (s/split (s/trim s) #"[\s=,()]+"))
+
+(defn parse-spice-numbers [x]
+  (w/postwalk (some-fn spice-number identity) x))
+
 (defn parse-netlist [netlist-source]
   (let [[title & lines] (-> netlist-source
                             (s/replace #"\n\+" "")
                             s/split-lines)
         netlist (->> lines
                      (remove (some-fn (re? #"^\*") (re? #"^\w*$") (re? #"(?i)^.end$")))
-                     (map #(s/split % #"[\s=,()]+"))
-                     (w/postwalk (some-fn spice-number identity))
+                     (map tokenize-netlist-line)
+                     parse-spice-numbers
                      flatten-subscircuits
                      (group-by element-type))
         id-map (node-ids netlist)
@@ -853,6 +859,22 @@
   ([file {:keys [netlist] :as circuit}]
    ["set filetype=ascii"
     (str "write " file ".raw")]))
+
+(defn parse-ngspice-ascii-raw [f]
+  (let [splitter #(complement #{%})
+        [_ & vs] (drop-while (splitter "Variables:") (s/split-lines (slurp f)))
+        [vs [_ & data]] (split-with (splitter "Values:") vs)]
+    {:node-ids (->> (for [l vs
+                          :let [[idx & id-and-type] (-> l tokenize-netlist-line parse-spice-numbers)]]
+                      {(vec (butlast id-and-type)) idx})
+                    (apply merge))
+     :data (vec (for [[x & ys] (partition (count vs) (remove empty? data))
+                      :let [[x & ys] (->> ys
+                                          (cons (second (tokenize-netlist-line x)))
+                                          (mapv s/trim)
+                                          parse-spice-numbers)]]
+                  [x (doto (zero-matrix (count ys) 1)
+                       (.setData (double-array ys)))]))}))
 
 (defn read-netlist [f]
   (-> f slurp parse-netlist (vary-meta assoc :netlist-file f)))
