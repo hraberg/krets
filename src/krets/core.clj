@@ -836,13 +836,22 @@
       (when (not (zero? exit))
         (println err)))))
 
-(defn ngspice-graphical-plot-netlist [{:keys [netlist] :as circuit}]
-  (->> (concat [(-> circuit meta :netlist-source)]
-               [".control" "run"]
-               (for [[_ _ & nodes] (-> netlist commands :.plot)]
-                 (apply str "plot " (map report-node-label (report-nodes nodes))))
-               [".endc"])
+(defn ngspice-netlist [{:keys [netlist] :as circuit} & controls]
+  (->> (apply concat [(-> circuit meta :netlist-source)]
+              (when (seq controls)
+                [[".control" "run"] (apply concat (for [c controls] (c circuit))) [".endc"]]))
        (s/join "\n")))
+
+(defn ngspice-graphical-plot [{:keys [netlist] :as circuit}]
+  (for [[_ _ & nodes] (-> netlist commands :.plot)]
+    (apply str "plot " (map report-node-label (report-nodes nodes)))))
+
+(defn ngspice-output-data
+  ([circuit]
+   (let [file (file-relative-to-netlist circuit (str (-> circuit meta :netlist-file) ".out"))]
+     (ngspice-output-data file circuit)))
+  ([file {:keys [netlist] :as circuit}]
+    [(str "print all > " file)]))
 
 (defn read-netlist [f]
   (-> f slurp parse-netlist (vary-meta assoc :netlist-file f)))
