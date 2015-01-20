@@ -690,17 +690,22 @@
     .pack
     (.setVisible true)))
 
+(defn plot-series
+  ([circuit series series-type]
+   (plot-series circuit series series-type report-node-label))
+  ([{:keys [^long number-of-nodes netlist] :as circuit} series series-type report-node-label]
+   (let [xs (map first series)
+         ys (map second series)]
+     (for [[_ _ & nodes] (-> netlist commands :.plot sub-commands series-type)
+           :let [nodes (report-nodes nodes)]
+           node nodes]
+       (xy-series (report-node-label node)
+                  xs
+                  (map #(report-node-voltage circuit node %) ys))))))
+
 (defn plot-result [{:keys [^long number-of-nodes netlist] :as circuit} series series-type head-label]
-  (let [xs (map first series)
-        ys (map second series)]
-    (doseq [[_ _ & nodes] (-> netlist commands :.plot sub-commands series-type)
-            :let [nodes (report-nodes nodes)]
-            :when (seq nodes)]
-      (apply plot head-label "V"
-             (for [node nodes]
-               (xy-series (report-node-label node)
-                          xs
-                          (map #(report-node-voltage circuit node %) ys)))))))
+  (doseq [ss (plot-series circuit series series-type)]
+    (apply plot head-label "V" ss)))
 
 (def ^:dynamic *normalize-wave* true)
 
@@ -799,6 +804,26 @@
              (.flip buffer)
              (recur (+ t buffer-length) (assoc dc-result :x (second (last result)))))))))))
 
+(defn transient-series [{:keys [netlist] :as circuit} dc-result]
+  (for [[_ time-step simulation-time start] (:.tran (commands netlist))
+        :let [series (do (println "Transient Analysis" time-step simulation-time (str start))
+                         (time (transient-analysis circuit time-step simulation-time 0.0 (step-fn circuit) dc-result)))
+              series (cond->> series
+                              (number? start) (drop-while (fn [[^double t]] (< t (double start)))))]]
+    {:time-step time-step
+     :simulation-time simulation-time
+     :start start
+     :series series}))
+
+(defn dc-sweep [{:keys [netlist] :as circuit}]
+  (for [[_ source start stop step] (:.dc (commands netlist))]
+    {:source source
+     :start start
+     :stop stop
+     :step step
+     :sweep (do (println  "DC Analysis" start stop step)
+                (time (dc-analysis circuit source start stop step)))}))
+
 (defn batch [{:keys [title netlist models] :as circuit}]
   (let [circuit (compile-circuit circuit)]
     (println title)
@@ -819,18 +844,20 @@
       (println "x")
       (println x)
       (println)
-      (doseq [[_ source start stop step] (:.dc (commands netlist))
-              :let [sweep (do (println  "DC Analysis" start stop step)
-                              (time (dc-analysis circuit source start stop step)))]]
+      (doseq [{:keys [source sweep]} (dc-sweep circuit)]
         (print-result circuit sweep :dc source)
         (plot-result circuit sweep :dc source))
-      (doseq [[_ time-step simulation-time start] (:.tran (commands netlist))
-              :let [series (do (println "Transient Analysis" time-step simulation-time (str start))
-                               (time (transient-analysis circuit time-step simulation-time 0.0 (step-fn circuit) dc-result)))
-                    series (cond->> series
-                                    (number? start) (drop-while (fn [[^double t]] (< t (double start)))))]
+      (doseq [{:keys [series]} (transient-series circuit dc-result)
               f [print-result plot-result wave-result]]
         (f circuit series :tran "t")))))
+
+(defn read-netlist [f]
+  (-> f slurp parse-netlist (vary-meta assoc :netlist-file f)))
+
+(defn process-file [f]
+  (-> f read-netlist batch))
+
+;; Spice
 
 (defn spice
   ([circuit]
@@ -864,23 +891,42 @@
   (let [splitter #(complement #{%})
         [_ & vs] (drop-while (splitter "Variables:") (s/split-lines (slurp f)))
         [vs [_ & data]] (split-with (splitter "Values:") vs)]
-    {:node-ids (->> (for [l vs
-                          :let [[idx & id-and-type] (-> l tokenize-netlist-line parse-spice-numbers)]]
-                      {(vec (butlast id-and-type)) idx})
+    {:type (case (low-key (second (tokenize-netlist-line (first vs))))
+             :time :tran
+             :v-sweep :dc)
+     :node-ids (->> (for [l vs
+                          :let [[idx & [t node type]] (-> l tokenize-netlist-line parse-spice-numbers)]
+                          :when (= :v (low-key t))]
+                      {node idx})
                     (apply merge))
-     :data (vec (for [[x & ys] (partition (count vs) (remove empty? data))
-                      :let [[x & ys] (->> ys
-                                          (cons (second (tokenize-netlist-line x)))
-                                          (mapv s/trim)
-                                          parse-spice-numbers)]]
-                  [x (doto (zero-matrix (count ys) 1)
-                       (.setData (double-array ys)))]))}))
+     :series (vec (for [[x & ys] (partition (count vs) (remove empty? data))
+                        :let [[x & ys] (->> ys
+                                            (cons (second (tokenize-netlist-line x)))
+                                            (mapv s/trim)
+                                            parse-spice-numbers)]]
+                    [x (doto (zero-matrix (count ys) 1)
+                         (.setData (double-array ys)))]))}))
 
-(defn read-netlist [f]
-  (-> f slurp parse-netlist (vary-meta assoc :netlist-file f)))
-
-(defn process-file [f]
-  (-> f read-netlist batch))
+(defn ngspice-plot [{:keys [netlist] :as circuit}]
+  (when (-> netlist commands :.plot)
+    (spice ["ngspice" "-b"] (ngspice-netlist circuit ngspice-output-data))
+    (let [circuit (compile-circuit circuit)
+          file (file-relative-to-netlist circuit (str (-> circuit meta :netlist-file) ".raw"))
+          {:keys [series type]} (parse-ngspice-ascii-raw file)
+          spice-node-label (fn [x] (str "spice-" (report-node-label x)))]
+      (case type
+        :tran (let [krets-series (map :series (transient-series circuit (dc-operating-point circuit)))]
+                (->> (for [[s report-node-label] (map vector (cons series krets-series)
+                                                      (cons spice-node-label
+                                                            (repeat report-node-label)))]
+                      (plot-series circuit s :tran report-node-label))
+                     (apply concat)
+                     (apply plot "t" "V")))
+        :dc (doseq [{:keys [source sweep]} (dc-sweep circuit)]
+              (->> (for [[s report-node-label] [[series spice-node-label] [sweep report-node-label]]]
+                     (plot-series circuit s :dc report-node-label))
+                   (apply concat)
+                   (apply plot source "V")))))))
 
 (defn -main [& [f]]
   (if f
