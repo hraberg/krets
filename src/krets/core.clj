@@ -120,9 +120,6 @@
 (defn commands [netlist]
   (group-by (comp low-key first) (:. netlist)))
 
-(defn sub-commands [m]
-  (group-by (comp low-key second) m))
-
 (defn models [netlist]
   (->> (for [[_ n t & kvs] (:.model (commands netlist))]
          {n (->> (for [[k v] (partition 2 kvs)]
@@ -360,7 +357,7 @@
 (def ^:dynamic *voltage-sources* {})
 
 (defmethod stamp [:v :linear] [{:keys [voltage-source->index netlist] :as circuit} {:keys [a z] :as env} [id n+ n- :as e]]
-  (let [dc-sweep? ((low-key id) (-> netlist commands :.dc sub-commands))
+  (let [dc-sweep? ((low-key id) (->> netlist commands :.dc (map (comp low-key second)) set))
         dc (independent-source circuit env e)
         idx (voltage-source->index id)]
     (code (cond
@@ -617,6 +614,31 @@
 
 ;; Frontend
 
+(defmulti command (fn [circuit env [[dot & c] :as command]] (low-key (apply str c))))
+
+(defmethod command :default [_ _ _])
+
+(defmethod command :dc [circuit _ [_ source start stop step]]
+  {:type :dc
+   :label source
+   :start start
+   :stop stop
+   :step step
+   :series (do (println  "DC Analysis" start stop step)
+               (time (dc-analysis circuit source start stop step)))})
+
+(defmethod command :tran [{:keys [netlist] :as circuit} dc-result [_ time-step simulation-time start]]
+  (let [series (do (println "Transient Analysis" time-step simulation-time (str start))
+                   (time (transient-analysis circuit time-step simulation-time 0.0 (step-fn circuit) dc-result)))
+        series (cond->> series
+                        (number? start) (drop-while (fn [[^double t]] (< t (double start)))))]
+    {:type :tran
+     :label "t"
+     :start start
+     :stop simulation-time
+     :step time-step
+     :series series}))
+
 (defn report-node-label [[k n+ n-]]
   (let [f #(cond-> % (number? %) long)]
     (format "%s(%s)" k (s/join ","  (cond-> [(f n+)] n- (concat [(f n-)]))))))
@@ -636,21 +658,21 @@
   (->> nodes
        (partition-by (re? #"(?i)[vi]"))
        (partition 2)
-       (map (partial apply concat))))
+       (map (partial apply concat))
+       seq))
 
-(defn print-result [{:keys [^long number-of-nodes time-step netlist] :as circuit} series series-type head-label]
-  (let [transient? (= :tran series-type)
-        head-format (if transient?
-                      (str "%." (.scale (bigdec time-step)) "f")
-                      "%f")
-        node-format "%.10f"]
-    (doseq [[_ _ & nodes] (-> netlist commands :.print sub-commands series-type)
-            :let [nodes (report-nodes nodes)]
-            :when (seq nodes)]
+(defmethod command :print [{:keys [^long number-of-nodes netlist] :as circuit} {:keys [series label step type]}
+                            [_ print-type & nodes :as command]]
+  (when-let [nodes (and (= type (low-key print-type))
+                        (report-nodes nodes))]
+    (let [head-format (if (= :tran type)
+                        (str "%." (.scale (bigdec step)) "f")
+                        "%f")
+          node-format "%.10f"]
       (pp/print-table
-       (concat [head-label] (map report-node-label nodes))
+       (concat [label] (map report-node-label nodes))
        (for [[h x] series]
-         (apply merge {head-label (format head-format h)}
+         (apply merge {label (format head-format h)}
                 (for [node nodes]
                   {(report-node-label node)
                    (format node-format (report-node-voltage circuit node x))})))))))
@@ -691,21 +713,19 @@
     (.setVisible true)))
 
 (defn plot-series
-  ([circuit series series-type]
-   (plot-series circuit series series-type report-node-label))
-  ([{:keys [^long number-of-nodes netlist] :as circuit} series series-type report-node-label]
+  ([{:keys [^long number-of-nodes netlist] :as circuit}
+    {:keys [series type node-label] :or {node-label report-node-label}} [_ _ & nodes]]
    (let [xs (map first series)
          ys (map second series)]
-     (for [[_ _ & nodes] (-> netlist commands :.plot sub-commands series-type)
-           :let [nodes (report-nodes nodes)]]
-       (for [node nodes]
-         (xy-series (report-node-label node)
-                    xs
-                    (map #(report-node-voltage circuit node %) ys)))))))
+     (for [node (report-nodes nodes)]
+       (xy-series (node-label node)
+                  xs
+                  (map #(report-node-voltage circuit node %) ys))))))
 
-(defn plot-result [{:keys [^long number-of-nodes netlist] :as circuit} series series-type head-label]
-  (doseq [ss (plot-series circuit series series-type)]
-    (apply plot head-label "V" ss)))
+(defmethod command :plot [{:keys [^long number-of-nodes netlist] :as circuit} {:keys [label type] :as result}
+                          [_ plot-type :as command]]
+  (when (= type (low-key plot-type))
+    (apply plot label "V" (plot-series circuit result command))))
 
 (def ^:dynamic *normalize-wave* true)
 
@@ -733,11 +753,10 @@
     (AudioSystem/write (AudioSystem/getAudioInputStream out-format in)
                        AudioFileFormat$Type/WAVE (file-relative-to-netlist circuit file))))
 
-(defn wave-result [{:keys [^long number-of-nodes netlist ^double time-step] :as circuit} series series-type _]
-  (let [ys (map second series)]
-    (doseq [[_ file bits sample-rate & nodes] (-> netlist commands :.wave)
-            :let [nodes (report-nodes nodes)]
-            :when (seq nodes)]
+(defmethod command :wave [{:keys [^long number-of-nodes netlist ^double time-step] :as circuit} {:keys [series]}
+                          [_ file bits sample-rate & nodes]]
+  (when-let [nodes (and series (report-nodes nodes))]
+    (let [ys (map second series)]
       (apply write-wave circuit file sample-rate bits (/ time-step)
              (for [node nodes]
                (map #(report-node-voltage circuit node %) ys))))))
@@ -804,28 +823,6 @@
              (.flip buffer)
              (recur (+ t buffer-length) (assoc dc-result :x (second (last result)))))))))))
 
-(defn transient-series [{:keys [netlist] :as circuit} dc-result]
-  (for [[_ time-step simulation-time start] (:.tran (commands netlist))
-        :let [series (do (println "Transient Analysis" time-step simulation-time (str start))
-                         (time (transient-analysis circuit time-step simulation-time 0.0 (step-fn circuit) dc-result)))
-              series (cond->> series
-                              (number? start) (drop-while (fn [[^double t]] (< t (double start)))))]]
-    {:type :tran
-     :time-step time-step
-     :simulation-time simulation-time
-     :start start
-     :series series}))
-
-(defn dc-sweep [{:keys [netlist] :as circuit}]
-  (for [[_ source start stop step] (:.dc (commands netlist))]
-    {:type :dc
-     :source source
-     :start start
-     :stop stop
-     :step step
-     :sweep (do (println  "DC Analysis" start stop step)
-                (time (dc-analysis circuit source start stop step)))}))
-
 (defn batch [{:keys [title netlist models] :as circuit}]
   (let [circuit (compile-circuit circuit)]
     (println title)
@@ -846,12 +843,12 @@
       (println "x")
       (println x)
       (println)
-      (doseq [{:keys [source sweep]} (dc-sweep circuit)
-              f [print-result plot-result]]
-        (f circuit sweep :dc source))
-      (doseq [{:keys [series]} (transient-series circuit dc-result)
-              f [print-result plot-result wave-result]]
-        (f circuit series :tran "t")))))
+      (doseq [analysis [:.dc :.tran]
+              :let [result (command circuit dc-result (first (analysis (commands netlist))))]
+              :when result
+              output [:.print :.plot :.wave]
+              c (output (commands netlist))]
+        (command circuit result c)))))
 
 (defn read-netlist [f]
   (-> f slurp parse-netlist (vary-meta assoc :netlist-file f)))
@@ -892,15 +889,18 @@
 (defn parse-ngspice-ascii-raw [f]
   (let [splitter #(complement #{%})
         [_ & vs] (drop-while (splitter "Variables:") (s/split-lines (slurp f)))
-        [vs [_ & data]] (split-with (splitter "Values:") vs)]
-    {:type (case (low-key (second (tokenize-netlist-line (first vs))))
-             :time :tran
-             :v-sweep :dc)
+        [vs [_ & data]] (split-with (splitter "Values:") vs)
+        label (second (tokenize-netlist-line (first vs)))
+        type (case (low-key label)
+               :time :tran
+               :v-sweep :dc)]
+    {:type type
      :node-ids (->> (for [l vs
                           :let [[idx & [t node type]] (-> l tokenize-netlist-line parse-spice-numbers)]
                           :when (= :v (low-key t))]
                       {node idx})
                     (apply merge))
+     :label label
      :series (vec (for [[x & ys] (partition (count vs) (remove empty? data))
                         :let [[x & ys] (->> ys
                                             (cons (second (tokenize-netlist-line x)))
@@ -912,11 +912,12 @@
 (defn ngspice-node-label [x]
   (str "spice-" (report-node-label x)))
 
-(defn overlap-plot [circuit type head-label series spice-series]
-  (doseq [[a b] (->> (interleave (plot-series circuit series type report-node-label)
-                                 (plot-series circuit spice-series type ngspice-node-label))
-                     (partition 2))]
-    (apply plot head-label "V" (concat a b))))
+(defn overlap-plot [circuit {:keys [label] :as result} spice-result command]
+  (->> (interleave (plot-series circuit (assoc spice-result :node-label ngspice-node-label) command)
+                   (plot-series circuit result command))
+       (partition 2)
+       (apply concat)
+       (apply plot label "V")))
 
 (defn ngspice-plot [{:keys [netlist] :as circuit}]
   (when (-> netlist commands :.plot)
@@ -924,12 +925,12 @@
     (let [circuit (compile-circuit circuit)
           file (str (-> circuit meta :netlist-file) ".raw")
           file (file-relative-to-netlist circuit file)
-          {:keys [type] spice-series :series} (parse-ngspice-ascii-raw file)]
-      (case type
-        :tran (let [{:keys [series]} (first (transient-series circuit (dc-operating-point circuit)))]
-                (overlap-plot circuit type "t" series spice-series))
-        :dc (let [{:keys [source sweep]} (first (dc-sweep circuit))]
-              (overlap-plot circuit type source sweep spice-series))))))
+          {:keys [type] :as spice-result} (parse-ngspice-ascii-raw file)
+          dc-result (dc-operating-point circuit)
+          c (low-key (str "." (name type)))]
+      (when-let [result (some->> netlist commands c first (command circuit dc-result))]
+        (doseq [c (:.plot (commands netlist))]
+          (overlap-plot circuit result spice-result c))))))
 
 (defn -main [& [f]]
   (if f

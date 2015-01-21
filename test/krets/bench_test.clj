@@ -8,9 +8,9 @@
   (let [c (-> f read-netlist compile-circuit)
         stub (constantly nil)]
     (println "running" f (:number-of-nodes c) "nodes")
-    (with-redefs [plot-result stub
-                  print-result stub
-                  wave-result stub
+    (with-redefs [plot stub
+                  plot-series stub
+                  write-wave stub
                   println stub
                   pp/print-table stub]
       (cc/quick-bench

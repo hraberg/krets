@@ -11,9 +11,10 @@
 (deftest sanity-check
   (doseq [f (test-circuits)
           :let [stub (constantly nil)]]
-    (with-redefs [plot-result stub
-                  print-result stub
-                  wave-result stub]
+    (with-redefs [plot stub
+                  plot-series stub
+                  write-wave stub
+                  println stub]
       (let [fail (volatile! nil)
             out (with-out-str
                   (try
