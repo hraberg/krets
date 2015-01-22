@@ -234,7 +234,7 @@
      (ground? n-) (term n+)
      :else `(- ~(term n+) ~(term n-)))))
 
-(defn temprature-voltage ^double [^double t]
+(defn thermal-voltage ^double [^double t]
   (let [zero-kelvin -273.15
         boltzmann 8.6173e-5]
     (* (- t zero-kelvin) boltzmann)))
@@ -388,7 +388,7 @@
 (defmethod stamp [:d :non-linear] [{:keys [models options]} {:keys [x a z]} [_ anode cathode model]]
   (let [defaults {:tnom (:tnom options) :is 1.0e-14}
         {:keys [^double is ^double tnom]} (merge defaults (models model))
-        vt (temprature-voltage tnom)]
+        vt (thermal-voltage tnom)]
     (code (let [vd (voltage-diff x anode cathode)
                 id (diode-current is vd vt)
                 geq (diode-conductance is id vt)
@@ -399,7 +399,7 @@
 (defmethod stamp [:j :non-linear] [{:keys [models options]} {:keys [x a z]} [_ nd ng ns model]]
   (let [defaults {:tnom (:tnom options) :is 1.0e-14 :vto -2.0 :beta 1.0e-4 :lambda 0.0}
         {:keys [^double is ^double tnom model-type ^double vto ^double beta ^double lambda]} (merge defaults (models model))
-        vt (temprature-voltage tnom)
+        vt (thermal-voltage tnom)
         pol (case model-type
               :njf 1.0
               :pjf -1.0)]
@@ -466,7 +466,7 @@
   (let [model (first (filter string? [model-or-ns model]))
         defaults {:tnom (:tnom options) :is 1.0e-16 :bf 100.0 :br 1.0}
         {:keys [^double is ^double tnom ^double bf ^double br model-type]} (merge defaults (models model))
-        vt (temprature-voltage tnom)
+        vt (thermal-voltage tnom)
         pol (case model-type
               :npn 1.0
               :pnp -1.0)]
