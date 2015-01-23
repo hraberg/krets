@@ -230,9 +230,9 @@
   (let [term (fn [^long n]
                `(mget ~x ~(dec n) 0))]
     (cond
-     (ground? n+) `(- ~(term n-))
-     (ground? n-) (term n+)
-     :else `(- ~(term n+) ~(term n-)))))
+      (ground? n+) `(- ~(term n-))
+      (ground? n-) (term n+)
+      :else `(- ~(term n+) ~(term n-)))))
 
 (defn thermal-voltage ^double [^double t]
   (let [zero-kelvin -273.15
@@ -273,8 +273,8 @@
 
 (defmulti independent-source (fn [circuit {:keys [type]} [id n+ n- source-type & opts]]
                                [(if (string? source-type)
-                                   (low-key source-type)
-                                   :dc) type]))
+                                  (low-key source-type)
+                                  :dc) type]))
 
 (defmethod independent-source :default [_ _ _])
 
@@ -308,11 +308,11 @@
      (let [t (double t)
            tp (rem (- t td) per)]
        (-> (cond
-            (< t td) v1
-            (< tp tr) (+ v1 (* (- v2 v1) (/ tp tr)))
-            (< tp pw-end) v2
-            (< tp f-end) (- v2 (* (- v2 v1) (/ (- tp tr pw) tf)))
-            :else v1)
+             (< t td) v1
+             (< tp tr) (+ v1 (* (- v2 v1) (/ tp tr)))
+             (< tp pw-end) v2
+             (< tp f-end) (- v2 (* (- v2 v1) (/ (- tp tr pw) tf)))
+             :else v1)
            double)))))
 
 (def ^:dynamic *wave-table* (atom {}))
@@ -361,8 +361,8 @@
         dc (independent-source circuit env e)
         idx (voltage-source->index id)]
     (code (cond
-           dc-sweep? (stamp-matrix z idx 1 (double (*voltage-sources* id dc)))
-           dc (stamp-matrix z idx 1 dc))
+            dc-sweep? (stamp-matrix z idx 1 (double (*voltage-sources* id dc)))
+            dc (stamp-matrix z idx 1 dc))
           (conductance-voltage-stamp a n+ n- idx))))
 
 (defmethod stamp [:v :transient] [{:keys [voltage-source->index] :as circuit} {:keys [z] :as env} [id :as e]]
@@ -371,7 +371,7 @@
       (code (stamp-matrix z idx 1 source)))))
 
 (defmethod stamp [:e :linear] [{:keys [voltage-source->index]} {:keys [a]}
-                                       [id ^long out+ ^long out- ^long in+ ^long in- ^double gain]]
+                               [id ^long out+ ^long out- ^long in+ ^long in- ^double gain]]
   (let [idx (voltage-source->index id)]
     (code (conductance-voltage-stamp a out- out+ idx)
           (stamp-matrix a idx in+ gain)
@@ -419,33 +419,33 @@
                   (let [vgs-vto (- vgs vto)
                         b (* beta (+ 1.0 (* lambda vds)))]
                     (cond
-                     ;; cutoff
-                     (<= vgs-vto 0.0) (recur 0.0 0.0 0.0)
-                     ;; saturation
-                     (<= vgs-vto vds) (recur (* b vgs-vto vgs-vto)
-                                             (* b 2.0 vgs-vto)
-                                             (* lambda beta vgs-vto vgs-vto))
-                     ;; linear
-                     :else (recur (* b vds (- (* 2.0 vgs-vto) vds))
-                                  (* b 2.0 vds)
-                                  (+ (* b 2.0 (- vgs-vto vds))
-                                     (* lambda beta vds (- (* 2.0 vgs-vto) vds))))))
+                      ;; cutoff
+                      (<= vgs-vto 0.0) (recur 0.0 0.0 0.0)
+                      ;; saturation
+                      (<= vgs-vto vds) (recur (* b vgs-vto vgs-vto)
+                                              (* b 2.0 vgs-vto)
+                                              (* lambda beta vgs-vto vgs-vto))
+                      ;; linear
+                      :else (recur (* b vds (- (* 2.0 vgs-vto) vds))
+                                   (* b 2.0 vds)
+                                   (+ (* b 2.0 (- vgs-vto vds))
+                                      (* lambda beta vds (- (* 2.0 vgs-vto) vds))))))
                   ;; inverse mode
                   (let [vgd-vto (- vgd vto)
                         b (* beta (- 1.0 (* lambda vds)))]
                     (cond
-                     ;; cutoff
-                     (<= vgd-vto 0.0) (recur 0.0 0.0 0.0)
-                     ;; saturation
-                     (<= vgd-vto (- vds)) (recur (- (* b vgd-vto vgd-vto))
-                                                 (- (* b 2.0 vgd-vto))
-                                                 (+ (* lambda beta vgd-vto vgd-vto)
-                                                    (* b 2.0 vgd-vto)))
-                     ;; linear
-                     :else (recur (* b vds (- (* 2.0 vgd-vto) vds))
-                                  (* b 2.0 vds)
-                                  (- (* b 2.0 vgd-vto)
-                                     (* lambda beta vds (+ (* 2.0 vgd-vto) vds)))))))
+                      ;; cutoff
+                      (<= vgd-vto 0.0) (recur 0.0 0.0 0.0)
+                      ;; saturation
+                      (<= vgd-vto (- vds)) (recur (- (* b vgd-vto vgd-vto))
+                                                  (- (* b 2.0 vgd-vto))
+                                                  (+ (* lambda beta vgd-vto vgd-vto)
+                                                     (* b 2.0 vgd-vto)))
+                      ;; linear
+                      :else (recur (* b vds (- (* 2.0 vgd-vto) vds))
+                                   (* b 2.0 vds)
+                                   (- (* b 2.0 vgd-vto)
+                                      (* lambda beta vds (+ (* 2.0 vgd-vto) vds)))))))
                 (let [igseq (- igs (* ggs vgs))
                       igdeq (- igd (* ggd vgd))
                       idseq (- gm (* gm vgs) (* gds vds))]
@@ -514,9 +514,9 @@
   (if mna-stamp
     circuit
     (assoc circuit
-      :mna-stamp (binding [*ns* (find-ns 'krets.core)]
-                   (eval (compile-mna-stamp circuit)))
-      :solver (linear-solver number-of-rows))))
+           :mna-stamp (binding [*ns* (find-ns 'krets.core)]
+                        (eval (compile-mna-stamp circuit)))
+           :solver (linear-solver number-of-rows))))
 
 ;; MNA Analysis
 
@@ -631,7 +631,7 @@
   (let [series (do (println "Transient Analysis" time-step simulation-time (str start))
                    (time (transient-analysis circuit time-step simulation-time 0.0 (step-fn circuit) dc-result)))
         series (cond->> series
-                        (number? start) (drop-while (fn [[^double t]] (< t (double start)))))]
+                 (number? start) (drop-while (fn [[^double t]] (< t (double start)))))]
     {:type :tran
      :label "t"
      :start start
@@ -662,7 +662,7 @@
        seq))
 
 (defmethod command :print [{:keys [^long number-of-nodes netlist] :as circuit} {:keys [series label step type]}
-                            [_ print-type & nodes :as command]]
+                           [_ print-type & nodes :as command]]
   (when-let [nodes (and (= type (low-key print-type))
                         (report-nodes nodes))]
     (let [head-format (if (= :tran type)
@@ -865,8 +865,8 @@
    (let [{:keys [out err ^long exit]} (apply sh/sh (concat cmd  [:in netlist-source]))]
      (when out
        (println out))
-      (when (not (zero? exit))
-        (println err)))))
+     (when (not (zero? exit))
+       (println err)))))
 
 (defn ngspice-netlist [{:keys [netlist] :as circuit} & controls]
   (->> (apply concat [(-> circuit meta :netlist-source)]
