@@ -407,7 +407,8 @@
 (defmethod stamp [:l :transient] [{:keys [voltage-source->index ^double time-step]} {:keys [z x]} [id _ _ ^double l]]
   (let [req (/ l time-step)
         idx (voltage-source->index id)]
-    (code (let [veq (- (* req (unknown x idx)))]
+    (code (let [il (unknown x idx)
+                veq (- (* req il))]
             (stamp-matrix z idx 1 veq)))))
 
 (def ^:dynamic *voltage-sources* {})
