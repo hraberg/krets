@@ -1,0 +1,10 @@
+Lowpass filter
+v1 2 1 sin(0 15 60 0 0)
+v2 1 0 dc 24
+rload 4 0 1k
+l1 2 3 100m
+l2 3 4 250m
+c1 3 0 100u
+.tran 50us 20ms uic
+.plot tran v(4)
+.end

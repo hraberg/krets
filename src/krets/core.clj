@@ -103,6 +103,9 @@
 (defmethod element-info :default [_]
   (element-info-base))
 
+(defmethod element-info :l [_]
+  (element-info-base :number-of-voltage-sources 1))
+
 (defmethod element-info :v [_]
   (element-info-base :number-of-voltage-sources 1))
 
@@ -157,8 +160,11 @@
      (number-of-nodes netlist)))
 
 (defn voltage-source->index [netlist]
-  (let [number-of-nodes (number-of-nodes netlist)]
-    (into {} (for [[^long idx [id]] (map-indexed vector (mapcat netlist [:v :e]))]
+  (let [number-of-nodes (number-of-nodes netlist)
+        elements-with-sources (->> netlist
+                                   elements
+                                   (filter (comp pos? :number-of-voltage-sources element-info)))]
+    (into {} (for [[^long idx [id]] (map-indexed vector elements-with-sources)]
                [id (inc (+ number-of-nodes idx))]))))
 
 (defn commands [netlist]
@@ -264,13 +270,14 @@
   (transient-stamp! [_ z x t])
   (non-linear-stamp! [_ a z x]))
 
+(defmacro unknown [x idx]
+  `(mget ~x ~(dec (long idx)) 0))
+
 (defmacro voltage-diff [x n+ n-]
-  (let [term (fn [^long n]
-               `(mget ~x ~(dec n) 0))]
-    (cond
-      (ground? n+) `(- ~(term n-))
-      (ground? n-) (term n+)
-      :else `(- ~(term n+) ~(term n-)))))
+  (cond
+    (ground? n+) `(- (unknown ~x ~n-))
+    (ground? n-) `(unknown ~x ~n+)
+    :else `(- (unknown ~x ~n+) (unknown ~x ~n-))))
 
 (defn thermal-voltage ^double [^double t]
   (let [zero-kelvin -273.15
@@ -391,6 +398,17 @@
   (let [geq (/ c time-step)]
     (code (let [ieq (- (* geq (voltage-diff x n+ n-)))]
             (source-current-stamp z n+ n- ieq)))))
+
+(defmethod stamp [:l :linear] [{:keys [voltage-source->index ^double time-step]} {:keys [a]} [id n+ n- ^double l]]
+  (let [idx (voltage-source->index id)]
+    (code (conductance-voltage-stamp a n+ n- idx)
+          (stamp-matrix a idx idx (- (/ l time-step))))))
+
+(defmethod stamp [:l :transient] [{:keys [voltage-source->index ^double time-step]} {:keys [z x]} [id _ _ ^double l]]
+  (let [req (/ l time-step)
+        idx (voltage-source->index id)]
+    (code (let [veq (- (* req (unknown x idx)))]
+            (stamp-matrix z idx 1 veq)))))
 
 (def ^:dynamic *voltage-sources* {})
 
