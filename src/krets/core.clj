@@ -86,14 +86,38 @@
 
 (def ground? (every-pred number? zero?))
 
-(defn number-of-voltage-sources ^long [netlist]
-  (count (mapcat netlist [:v :e])))
-
 (defn element-type [[[t] & nodes]]
   (low-key t))
 
+(defn elements [netlist]
+  (mapcat val (dissoc netlist :.)))
+
+(defmulti number-of-element-voltage-soures element-type)
+
+(defmethod number-of-element-voltage-soures :default [_] 0)
+
+(defmethod number-of-element-voltage-soures :v [_] 1)
+
+(defmethod number-of-element-voltage-soures :e [_] 1)
+
+(defn number-of-voltage-sources ^long [netlist]
+  (->> netlist
+       elements
+       (map number-of-element-voltage-soures)
+       (reduce +)))
+
+(defmulti number-of-element-nodes element-type)
+
+(defmethod number-of-element-nodes :default [_] 2)
+
+(defmethod number-of-element-nodes :e [_] 4)
+
+(defmethod number-of-element-nodes :j [_] 3)
+
+(defmethod number-of-element-nodes :q [_] 3)
+
 (defn element-nodes [[_ & nodes :as e]]
-  (take ({:e 4 :j 3 :q 3 :. 0} (element-type e) 2) nodes))
+  (take (number-of-element-nodes e) nodes))
 
 (defn unique-nodes [elements]
   (->> elements
@@ -137,11 +161,10 @@
          {(low-key k) v})
        (apply merge {:tnom 27.0})))
 
-(defn non-linear? [netlist]
-  (boolean (some netlist [:d :j :q])))
+(declare non-linear-element-types)
 
-(defn elements [netlist]
-  (mapcat val (dissoc netlist :.)))
+(defn non-linear? [netlist]
+  (boolean (some netlist (non-linear-element-types))))
 
 (defn node-ids [netlist]
   (let [{ns true ss false} (group-by number? (unique-nodes (elements netlist)))]
@@ -517,6 +540,11 @@
            :mna-stamp (binding [*ns* (find-ns 'krets.core)]
                         (eval (compile-mna-stamp circuit)))
            :solver (linear-solver number-of-rows))))
+
+(defn non-linear-element-types []
+  (set (for [[t l] (->> stamp methods keys (filter vector?))
+             :when (= :non-linear l)]
+         t)))
 
 ;; MNA Analysis
 
