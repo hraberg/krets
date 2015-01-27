@@ -92,32 +92,52 @@
 (defn elements [netlist]
   (mapcat val (dissoc netlist :.)))
 
-(defmulti number-of-element-voltage-soures element-type)
+(defn element-info-base [& kvs]
+  (merge {:number-of-voltage-sources 0
+          :number-of-nodes 2
+          :non-linear? false}
+         (apply hash-map kvs)))
 
-(defmethod number-of-element-voltage-soures :default [_] 0)
+(defmulti element-info element-type)
 
-(defmethod number-of-element-voltage-soures :v [_] 1)
+(defmethod element-info :default [_]
+  (element-info-base))
 
-(defmethod number-of-element-voltage-soures :e [_] 1)
+(defmethod element-info :v [_]
+  (element-info-base :number-of-voltage-sources 1))
+
+(defmethod element-info :e [_]
+  (element-info-base
+   :number-of-voltage-sources 1
+   :number-of-nodes 4))
+
+(defmethod element-info :d [_]
+  (element-info-base :non-linear? true))
+
+(defmethod element-info :q [_]
+  (element-info-base
+   :number-of-nodes 3
+   :non-linear? true))
+
+(defmethod element-info :j [_]
+  (element-info-base
+   :number-of-nodes 3
+   :non-linear? true))
 
 (defn number-of-voltage-sources ^long [netlist]
   (->> netlist
        elements
-       (map number-of-element-voltage-soures)
+       (map (comp :number-of-voltage-sources element-info))
        (reduce +)))
 
-(defmulti number-of-element-nodes element-type)
-
-(defmethod number-of-element-nodes :default [_] 2)
-
-(defmethod number-of-element-nodes :e [_] 4)
-
-(defmethod number-of-element-nodes :j [_] 3)
-
-(defmethod number-of-element-nodes :q [_] 3)
+(defn non-linear? [netlist]
+  (->> netlist
+       elements
+       (some (comp :non-linear? element-info))
+       boolean))
 
 (defn element-nodes [[_ & nodes :as e]]
-  (take (number-of-element-nodes e) nodes))
+  (take (-> e element-info :number-of-nodes) nodes))
 
 (defn unique-nodes [elements]
   (->> elements
@@ -160,11 +180,6 @@
   (->> (for [[k v] (partition 2 (mapcat rest (:.options (commands netlist))))]
          {(low-key k) v})
        (apply merge {:tnom 27.0})))
-
-(declare non-linear-element-types)
-
-(defn non-linear? [netlist]
-  (boolean (some netlist (non-linear-element-types))))
 
 (defn node-ids [netlist]
   (let [{ns true ss false} (group-by number? (unique-nodes (elements netlist)))]
@@ -540,11 +555,6 @@
            :mna-stamp (binding [*ns* (find-ns 'krets.core)]
                         (eval (compile-mna-stamp circuit)))
            :solver (linear-solver number-of-rows))))
-
-(defn non-linear-element-types []
-  (set (for [[t l] (->> stamp methods keys (filter vector?))
-             :when (= :non-linear l)]
-         t)))
 
 ;; MNA Analysis
 
